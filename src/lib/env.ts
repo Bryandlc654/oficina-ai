@@ -10,6 +10,11 @@ const envSchema = z.object({
   WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(20).default(2),
   SUBTASK_CONCURRENCY: z.coerce.number().int().min(1).max(6).default(2),
   OLLAMA_BASE_URL: z.string().url().default("http://localhost:11434"),
+  // Run the task worker inside the web server (for hosts without a separate worker service).
+  EMBEDDED_WORKER: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((value) => value === "true"),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

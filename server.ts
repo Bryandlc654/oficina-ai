@@ -6,6 +6,7 @@ import Redis from "ioredis";
 import { getEnv } from "./src/lib/env";
 import { SESSION_COOKIE, verifySessionToken } from "./src/lib/auth/jwt";
 import { OFFICE_EVENTS_CHANNEL, closeRealtimePublisher } from "./src/realtime/publish";
+import { startTaskWorker } from "./src/worker/runner";
 
 const dev = process.env.NODE_ENV === "development";
 // Not HOSTNAME: platforms like Render set it to the container name, which breaks the proxy.
@@ -83,6 +84,17 @@ async function main(): Promise<void> {
     console.log(`[web] AI Virtual Office listening on http://${hostname}:${port} (${dev ? "dev" : "production"})`);
   });
 
+  // Without this, tasks wait forever on hosts with no separate worker (e.g. Render free).
+  // A dedicated worker can still run alongside: BullMQ hands each job to only one of them.
+  let stopWorker: (() => Promise<void>) | null = null;
+  if (env.EMBEDDED_WORKER) {
+    startTaskWorker()
+      .then((stop) => {
+        stopWorker = stop;
+      })
+      .catch((error: Error) => console.error("[web] embedded worker failed to start:", error.message));
+  }
+
   let shuttingDown = false;
   const shutdown = async (signal: string) => {
     if (shuttingDown) return;
@@ -92,6 +104,7 @@ async function main(): Promise<void> {
     const force = setTimeout(() => process.exit(1), 15_000);
     force.unref();
 
+    await stopWorker?.().catch(() => undefined);
     io.close();
     await subscriber.quit().catch(() => undefined);
     await closeRealtimePublisher().catch(() => undefined);

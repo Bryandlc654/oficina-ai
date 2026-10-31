@@ -348,9 +348,10 @@ usuario remoto tiene permisos desde tu IP. La URL debe tener la contraseña codi
 **El login siempre redirige a `/login`.** Verifica que `AUTH_SECRET` esté definido y que
 no haya cambiado entre reinicios; al modificarlo se invalidan las sesiones existentes.
 
-**Las tareas quedan en `PENDING` o `SCHEDULED`.** Comprueba que el worker esté en ejecución
-(`npm run worker`) y que `/api/health` muestre `worker: "up"`. El worker es un proceso aparte:
-`npm run dev` o `npm start` no lo arrancan.
+**Las tareas quedan en `PENDING` o `SCHEDULED`.** Comprueba que `/api/health` muestre
+`worker: "up"`. Por defecto el servidor web arranca su propio worker (`EMBEDDED_WORKER=true`),
+así que no hace falta un servicio aparte. Si tienes un worker dedicado (`npm run worker`), puedes
+poner `EMBEDDED_WORKER=false` en la web; tenerlos ambos también es seguro.
 
 **La tarea falla con "No hay proveedor de IA disponible".** Configura una clave en `/ai`,
 habilita el proveedor y asígnalo al empleado (o marca uno como predeterminado). Revisa también
