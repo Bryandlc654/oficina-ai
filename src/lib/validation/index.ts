@@ -27,6 +27,8 @@ export const taskUpdateSchema = z.object({
   projectId: z.string().min(1).nullable().optional(),
   departmentId: z.string().min(1).nullable().optional(),
   paused: z.boolean().optional(),
+  /** Sends a task in review back to the team with the director's instructions. */
+  feedback: z.string().trim().min(5, "Describe qué hay que cambiar").max(3000).optional(),
 });
 
 export const agentUpdateSchema = z.object({

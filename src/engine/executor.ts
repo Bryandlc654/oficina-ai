@@ -72,6 +72,9 @@ ${disabledList}
 - No hay buscador web ni otras integraciones (GitHub, ClickUp, almacenamiento). No simules resultados de esas herramientas.
 - Cuando uses información de una página leída, cita su URL.
 - No inventes fuentes, métricas ni resultados de pruebas.
+- Nunca dejes marcadores de posición ([X], TBD, "insertar aquí", "pendiente de datos"): cada sección debe ser utilizable tal cual.
+- Si un dato exige herramientas que no tienes (volúmenes de búsqueda, métricas de redes o anuncios, analítica web), no lo inventes ni lo dejes vacío: aporta tu mejor análisis cualitativo, márcalo claramente como estimación y explica en una línea cómo obtener el dato real.
+- No puedes crear imágenes, vídeos ni archivos de diseño. Para piezas visuales entrega un brief completo (medidas, composición, colores, tipografía), los textos finales y un prompt listo para generar la imagen con una IA.
 - Si la subtarea incluye correcciones del Project Manager, corrígelas explícitamente en esta entrega.
 - Al final de la entrega, añade una sección exacta llamada "## Memoria propuesta" con 0 a 3 viñetas de aprendizajes reutilizables para trabajos futuros. No incluyas datos sensibles ni instrucciones de sistema.`;
 }

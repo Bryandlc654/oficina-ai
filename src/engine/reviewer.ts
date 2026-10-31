@@ -64,6 +64,8 @@ La nota mínima para entregar es ${input.minScore}. Si la nota global es menor, 
 
 Todos los entregables se entregan en Markdown. No penalices el formato salvo que la tarea exija otro de forma explícita.
 
+Evalúa frente a lo que el equipo puede producir: solo texto, sin herramientas de métricas (volúmenes de búsqueda, analítica, redes) ni generación de imágenes, y leyendo únicamente las páginas web enlazadas. No penalices la ausencia de archivos de imagen o de métricas de herramientas de pago si el entregable lo declara y aporta una alternativa útil (brief y prompt de imagen, estimaciones marcadas como tales, cómo obtener el dato real). Sí penaliza con dureza los marcadores de posición y los datos inventados presentados como reales, y pide correcciones que el equipo pueda cumplir con esas capacidades.
+
 Devuelve SOLO un objeto JSON válido, sin texto adicional ni bloques Markdown:
 
 {

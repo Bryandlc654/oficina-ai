@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { CalendarClock, CheckCircle2, Pause, Play, RotateCcw, XCircle } from "lucide-react";
+import { CalendarClock, CheckCircle2, MessageSquareReply, Pause, Play, RotateCcw, XCircle } from "lucide-react";
 import { extractApiError } from "@/lib/client-error";
 
 function toLocalInput(iso: string | null): string {
@@ -27,12 +27,14 @@ export function TaskActions({
 }) {
   const router = useRouter();
   const [schedule, setSchedule] = useState(toLocalInput(scheduledFor));
-  const [busy, setBusy] = useState<"schedule" | "cancel" | "reopen" | "pause" | "approve" | null>(null);
+  const [busy, setBusy] = useState<"schedule" | "cancel" | "reopen" | "pause" | "approve" | "revise" | null>(null);
+  const [feedback, setFeedback] = useState("");
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
 
   const canCancel = status !== "COMPLETED" && status !== "CANCELLED";
   const canReopen = status === "CANCELLED" || status === "FAILED";
   const canApprove = status === "REVIEW" || (status === "COMPLETED" && approvalStatus !== "APPROVED");
+  const canRevise = status === "REVIEW" || status === "COMPLETED";
   const isPaused = pausedAt !== null;
 
   async function patch(body: Record<string, unknown>): Promise<boolean> {
@@ -105,6 +107,22 @@ export function TaskActions({
     }
   }
 
+  async function reviseTask() {
+    setBusy("revise");
+    setMessage(null);
+    try {
+      const ok = await patch({ feedback });
+      if (ok) {
+        setFeedback("");
+        setMessage({ kind: "ok", text: "Tarea devuelta al equipo con tus indicaciones" });
+      }
+    } catch {
+      setMessage({ kind: "error", text: "No hay conexión con el servidor" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function togglePause() {
     setBusy("pause");
     setMessage(null);
@@ -127,7 +145,9 @@ export function TaskActions({
     <div className="panel p-5">
       <h2 className="text-sm font-semibold text-white">Programación</h2>
       <p className="mt-1 text-xs text-zinc-500">
-        La ejecución automática en segundo plano se activa en la fase 2 con BullMQ.
+        {status === "REVIEW"
+          ? "Pendiente de tu decisión: apruébala tal cual o devuélvela al equipo con indicaciones."
+          : "Las tareas se ejecutan automáticamente en segundo plano."}
       </p>
 
       <label htmlFor="task-schedule-edit" className="label mt-4">
@@ -173,6 +193,30 @@ export function TaskActions({
           </button>
         ) : null}
       </div>
+
+      {canRevise ? (
+        <div className="mt-5 border-t border-white/6 pt-4">
+          <label htmlFor="task-feedback" className="label">
+            Pedir cambios al equipo
+          </label>
+          <textarea
+            id="task-feedback"
+            className="input min-h-[80px]"
+            placeholder="Ej.: no inventes cifras; usa solo datos de nuestra web y entrega un prompt para generar la imagen"
+            value={feedback}
+            onChange={(event) => setFeedback(event.target.value)}
+          />
+          <button
+            type="button"
+            onClick={reviseTask}
+            disabled={busy !== null || feedback.trim().length < 5}
+            className="btn-secondary mt-2"
+          >
+            <MessageSquareReply className="h-4 w-4" />
+            {busy === "revise" ? "Enviando…" : "Rehacer con estas indicaciones"}
+          </button>
+        </div>
+      ) : null}
 
       {message ? (
         <p className={message.kind === "ok" ? "mt-3 text-xs text-emerald-300" : "mt-3 text-xs text-rose-300"}>

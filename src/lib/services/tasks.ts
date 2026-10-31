@@ -137,6 +137,10 @@ export async function updateTask(id: string, input: TaskUpdateInput, actorId: st
   const task = await db.task.findUnique({ where: { id } });
   if (!task) throw new NotFoundError("Tarea");
 
+  if (input.feedback !== undefined) {
+    return reviseTask(id, input.feedback, actorId);
+  }
+
   if (input.status) {
     assertTaskTransition(task.status, input.status);
   }
@@ -219,6 +223,74 @@ export async function updateTask(id: string, input: TaskUpdateInput, actorId: st
       message: input.paused === true ? "Tarea pausada" : input.paused === false ? "Tarea reanudada" : "Tarea actualizada",
     });
   }
+
+  return getTaskDetail(id);
+}
+
+/**
+ * The director's "redo it like this": every subtask gets the feedback as a correction
+ * (executors read corrections addressed to them) and the task runs again on the same plan.
+ */
+async function reviseTask(id: string, feedback: string, actorId: string) {
+  const task = await db.task.findUnique({
+    where: { id },
+    select: { status: true, subtasks: { select: { id: true, assignedAgentId: true } } },
+  });
+  if (!task) throw new NotFoundError("Tarea");
+  if (task.status !== TaskStatus.REVIEW && task.status !== TaskStatus.COMPLETED) {
+    throw new AppError("Solo puedes pedir cambios en tareas en revisión o completadas", 409, "INVALID_STATE");
+  }
+  if (task.subtasks.length === 0) {
+    throw new AppError("La tarea no tiene subtareas que rehacer", 409, "NO_PLAN");
+  }
+
+  await db.$transaction(async (tx) => {
+    await tx.agentMessage.createMany({
+      data: task.subtasks.map((subtask) => ({
+        taskId: id,
+        subtaskId: subtask.id,
+        toAgentId: subtask.assignedAgentId,
+        role: "USER" as const,
+        content: `Indicaciones del director: ${feedback}`,
+        metadata: { kind: "correction", source: "director" },
+      })),
+    });
+    await tx.subtask.updateMany({
+      where: { taskId: id },
+      data: { status: "PENDING", errorMessage: null, iterations: 0, completedAt: null },
+    });
+    await tx.task.update({
+      where: { id },
+      data: {
+        status: TaskStatus.PENDING,
+        approvalStatus: "NOT_REQUIRED",
+        finalReport: null,
+        completedAt: null,
+        errorMessage: null,
+        pausedAt: null,
+      },
+    });
+    await logActivity(
+      {
+        actorType: "ADMIN",
+        actorId,
+        action: "task.revision_requested",
+        entityType: "Task",
+        entityId: id,
+        metadata: { feedback: feedback.slice(0, 1000) },
+      },
+      tx,
+    );
+  }, { maxWait: 10000, timeout: 30000 });
+
+  await scheduleTaskExecution(id, null);
+
+  void publishOfficeEvent({
+    type: "task.updated",
+    taskId: id,
+    status: TaskStatus.PENDING,
+    message: "Tarea devuelta al equipo con tus indicaciones",
+  });
 
   return getTaskDetail(id);
 }
