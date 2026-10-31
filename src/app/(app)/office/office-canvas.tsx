@@ -32,23 +32,74 @@ const MAT = {
   screenOff: new THREE.MeshStandardMaterial({ color: "#0b1118", emissive: "#0f1720", emissiveIntensity: 0.2, roughness: 0.4 }),
   lamp: new THREE.MeshStandardMaterial({ color: "#fde68a", emissive: "#fbbf24", emissiveIntensity: 1.4 }),
   rug: new THREE.MeshStandardMaterial({ color: "#3a2f4a", roughness: 1 }),
+  table: new THREE.MeshStandardMaterial({ color: "#1d6b4f", roughness: 0.6 }),
+  beanbag: new THREE.MeshStandardMaterial({ color: "#5b3f86", roughness: 1 }),
+  beanbagAlt: new THREE.MeshStandardMaterial({ color: "#b4532a", roughness: 1 }),
   shadow: new THREE.MeshBasicMaterial({ color: "#000000", transparent: true, opacity: 0.35, depthWrite: false }),
 };
 
 const SKIN = ["#e9b48c", "#f2c9a8", "#c98e63", "#9a6a48", "#f5d6bd"];
 
 const LOUNGE_POSITION: [number, number, number] = [0, 0, -14.5];
-const LOUNGE_CENTER_Z = -14.5;
-const LOUNGE_SPOTS: [number, number, number][] = [
-  [-4.6, 0, -13.1],
-  [-2.4, 0, -13.1],
-  [2.4, 0, -13.1],
-  [4.6, 0, -13.1],
-  [-3.6, 0, -15.4],
-  [3.6, 0, -15.4],
-  [0, 0, -12.6],
-  [0, 0, -16.1],
+
+type IdleAction = "sit" | "drink" | "pingpong" | "arcade" | "game" | "chat";
+
+const ACTION_ICON: Record<IdleAction, string> = {
+  sit: "😌",
+  drink: "☕",
+  pingpong: "🏓",
+  arcade: "🕹️",
+  game: "🎮",
+  chat: "💬",
+};
+
+// Places idle agents wander between. Facing 0 looks towards +z (the camera).
+const IDLE_SPOTS: { position: [number, number, number]; facing: number; action: IdleAction }[] = [
+  { position: [-4.15, 0, -13.65], facing: 0, action: "sit" },
+  { position: [-3.05, 0, -13.65], facing: 0, action: "sit" },
+  { position: [3.05, 0, -13.65], facing: 0, action: "sit" },
+  { position: [4.15, 0, -13.65], facing: 0, action: "sit" },
+  { position: [-9.2, 0, -18.5], facing: Math.PI, action: "drink" },
+  { position: [-7.8, 0, -18.5], facing: Math.PI, action: "drink" },
+  { position: [16.5, 0, -19.2], facing: Math.PI, action: "drink" },
+  { position: [-13, 0, 15], facing: Math.PI / 2, action: "pingpong" },
+  { position: [-9, 0, 15], facing: -Math.PI / 2, action: "pingpong" },
+  { position: [-18.7, 0, 13.5], facing: -Math.PI / 2, action: "arcade" },
+  { position: [-18.7, 0, 15.5], facing: -Math.PI / 2, action: "arcade" },
+  { position: [15.6, 0, 15.5], facing: Math.PI / 2, action: "game" },
+  { position: [16.4, 0, 14.2], facing: Math.PI / 2, action: "game" },
+  { position: [16.4, 0, 16.8], facing: Math.PI / 2, action: "game" },
+  { position: [-0.7, 0, 16], facing: Math.PI / 2, action: "chat" },
+  { position: [0.7, 0, 16], facing: -Math.PI / 2, action: "chat" },
 ];
+
+const PINGPONG_SPOTS = IDLE_SPOTS.flatMap((spot, index) => (spot.action === "pingpong" ? [index] : []));
+
+// Shared between avatars so two of them never pick the same spot.
+const spotOwners = new Map<number, string>();
+const arrivedSpots = new Set<number>();
+
+function releaseSpot(agentId: string) {
+  for (const [index, owner] of spotOwners) {
+    if (owner !== agentId) continue;
+    spotOwners.delete(index);
+    arrivedSpots.delete(index);
+  }
+}
+
+function claimSpot(agentId: string, previous: number | null): number | null {
+  releaseSpot(agentId);
+  const free = IDLE_SPOTS.map((_, index) => index).filter((index) => !spotOwners.has(index) && index !== previous);
+  if (free.length === 0) return null;
+  const pick = free[Math.floor(Math.random() * free.length)] ?? 0;
+  spotOwners.set(pick, agentId);
+  return pick;
+}
+
+function seeded(index: number, salt: number): number {
+  const x = Math.sin(index * 12.9898 + salt * 78.233) * 43758.5453;
+  return x - Math.floor(x);
+}
 
 type PlacedAgent = {
   agent: OfficeAgent;
@@ -130,13 +181,13 @@ export function OfficeCanvas({
   return (
     <Canvas
       dpr={dpr}
-      camera={{ position: [0, 17, 24], fov: 48 }}
+      camera={{ position: [0, 21, 29], fov: 48 }}
       gl={{ antialias: true, powerPreference: "high-performance" }}
       onPointerMissed={() => onSelect(null)}
     >
       <PerformanceMonitor onDecline={() => setDpr(0.85)} onIncline={() => setDpr(1.25)} flipflops={3} />
       <color attach="background" args={["#05070a"]} />
-      <fog attach="fog" args={["#05070a", 24, 50]} />
+      <fog attach="fog" args={["#05070a", 30, 58]} />
 
       {/* No point lights: they cost per pixel on every mesh. Accents are emissive instead. */}
       <hemisphereLight args={["#9fb4cc", "#0b1016", 1.1]} />
@@ -156,10 +207,10 @@ export function OfficeCanvas({
 
       <OrbitControls
         makeDefault
-        target={[0, 0, -1]}
+        target={[0, 0, 1.5]}
         enablePan={false}
         minDistance={12}
-        maxDistance={40}
+        maxDistance={46}
         minPolarAngle={0.35}
         maxPolarAngle={1.32}
       />
@@ -208,37 +259,10 @@ function SceneContent({
       });
     }
 
+    // Idle agents pick their own spots (see WalkingAvatar); the desk is their fallback.
     const map = new Map<string, Target>();
-    const resting = placed.filter(
-      (entry) => entry.agent.status === "AVAILABLE" || entry.agent.status === "ON_BREAK",
-    );
-    const restingIndex = new Map(resting.map((entry, index) => [entry.agent.id, index]));
-
     placed.forEach((entry) => {
-      const meeting = meetingTargets.get(entry.agent.id);
-      if (meeting) {
-        map.set(entry.agent.id, meeting);
-        return;
-      }
-
-      const restIndex = restingIndex.get(entry.agent.id);
-      if (restIndex !== undefined) {
-        const spot =
-          LOUNGE_SPOTS[restIndex] ??
-          ([
-            -6 + (restIndex % 6) * 2.4,
-            0,
-            -17 - Math.floor(restIndex / 6) * 2,
-          ] as [number, number, number]);
-
-        map.set(entry.agent.id, {
-          position: spot,
-          facing: Math.atan2(-spot[0], LOUNGE_CENTER_Z - spot[2]),
-        });
-        return;
-      }
-
-      map.set(entry.agent.id, { position: entry.position, facing: 0 });
+      map.set(entry.agent.id, meetingTargets.get(entry.agent.id) ?? { position: entry.position, facing: 0 });
     });
 
     return { targets: map, meetingActive: active };
@@ -263,6 +287,11 @@ function SceneContent({
 
       <MeetingTable active={meetingActive} labelScale={labelScale} />
       <Lounge labelScale={labelScale} />
+      <GameRoom labelScale={labelScale} />
+      <Arcades />
+      <GamingLounge labelScale={labelScale} />
+      <ChatCorner />
+      <WaterCooler />
       <CoffeeBar />
       <Bookshelves />
       <StatusScreen
@@ -281,6 +310,7 @@ function SceneContent({
             home={entry.position}
             target={target}
             index={index}
+            idle={entry.agent.status === "AVAILABLE" || entry.agent.status === "ON_BREAK"}
             selected={selectedId === entry.agent.id}
             onSelect={onSelect}
             labelScale={labelScale}
@@ -461,6 +491,7 @@ function WalkingAvatar({
   home,
   target,
   index,
+  idle,
   selected,
   onSelect,
   labelScale,
@@ -469,6 +500,7 @@ function WalkingAvatar({
   home: [number, number, number];
   target: Target;
   index: number;
+  idle: boolean;
   selected: boolean;
   onSelect: (id: string | null) => void;
   labelScale: number;
@@ -486,62 +518,120 @@ function WalkingAvatar({
   const targetRef = useRef(target);
   targetRef.current = target;
 
+  // Idle life: each agent hops between free IDLE_SPOTS at its own pace.
+  const [spot, setSpot] = useState<number | null>(null);
+  const spotRef = useRef<number | null>(null);
+  const nextPick = useRef(seeded(index, 1) * 4);
+  const speed = 2.1 + seeded(index, 2) * 0.9;
+  const patience = 10 + seeded(index, 3) * 12;
+
+  useEffect(() => {
+    if (idle) return;
+    releaseSpot(agent.id);
+    spotRef.current = null;
+    setSpot(null);
+  }, [idle, agent.id]);
+  useEffect(() => () => releaseSpot(agent.id), [agent.id]);
+
   const skin = SKIN[index % SKIN.length] ?? "#e9b48c";
   const statusColor = STATUS_COLOR[agent.status] ?? "#52525b";
   const working = agent.status === "WORKING";
   const atMeeting = target.position[0] !== home[0] || target.position[2] !== home[2];
+  const icon = spot !== null ? IDLE_SPOTS[spot]?.action : undefined;
 
   useFrame((state, delta) => {
     if (!group.current) return;
     const dt = Math.min(delta, 0.05);
-    const destination = targetRef.current.position;
+    const t = state.clock.elapsedTime;
+
+    if (idle && t >= nextPick.current) {
+      const next = claimSpot(agent.id, spotRef.current);
+      spotRef.current = next;
+      setSpot(next);
+      nextPick.current = t + (next === null ? 4 : patience + Math.random() * 8);
+    }
+    const idleSpot = idle && spotRef.current !== null ? IDLE_SPOTS[spotRef.current] : undefined;
+    const goal = idleSpot ?? targetRef.current;
+
+    const destination = goal.position;
     const dx = destination[0] - current.current.x;
     const dz = destination[2] - current.current.z;
     const distance = Math.hypot(dx, dz);
     const walking = distance > 0.1;
 
     if (walking) {
-      const speed = 2.6;
       const step = Math.min(speed * dt, distance);
       current.current.x += (dx / distance) * step;
       current.current.z += (dz / distance) * step;
 
       const desired = Math.atan2(dx, dz);
       rotation.current = dampAngle(rotation.current, desired, 10, dt);
-      phase.current += dt * 9;
+      phase.current += dt * speed * 3.5;
     } else {
-      rotation.current = dampAngle(rotation.current, targetRef.current.facing, 6, dt);
+      rotation.current = dampAngle(rotation.current, goal.facing, 6, dt);
       phase.current = 0;
+    }
+
+    const action = idleSpot && !walking ? idleSpot.action : null;
+    if (spotRef.current !== null) {
+      if (action) arrivedSpots.add(spotRef.current);
+      else arrivedSpots.delete(spotRef.current);
     }
 
     group.current.position.set(current.current.x, walking ? Math.abs(Math.sin(phase.current)) * 0.03 : 0, current.current.z);
     group.current.rotation.y = rotation.current;
 
     const swing = walking ? Math.sin(phase.current) * 0.65 : 0;
-    if (legLeft.current) legLeft.current.rotation.x = swing;
-    if (legRight.current) legRight.current.rotation.x = -swing;
+    const seated = action === "sit" || action === "game";
+    if (legLeft.current) legLeft.current.rotation.x = seated ? -1.35 : swing;
+    if (legRight.current) legRight.current.rotation.x = seated ? -1.35 : -swing;
 
     if (armLeft.current && armRight.current) {
       if (walking) {
         armLeft.current.rotation.x = -swing * 0.8;
         armRight.current.rotation.x = swing * 0.8;
-      } else if (working) {
-        const base = atMeeting ? -0.35 : -0.75;
-        const amplitude = atMeeting ? 0.25 : 0.12;
-        armLeft.current.rotation.x = base + Math.sin(state.clock.elapsedTime * 7 + index) * amplitude;
-        armRight.current.rotation.x = base + Math.cos(state.clock.elapsedTime * 7 + index) * amplitude;
       } else {
-        armLeft.current.rotation.x = dampValue(armLeft.current.rotation.x, 0, 5, dt);
-        armRight.current.rotation.x = dampValue(armRight.current.rotation.x, 0, 5, dt);
+        let left = 0;
+        let right = 0;
+        if (action === "drink") {
+          right = (t + index * 1.7) % 5 < 1.3 ? -2.1 : -0.5;
+        } else if (action === "pingpong") {
+          left = -0.2;
+          right = -0.7 + Math.sin(t * 2.6 + (goal.facing > 0 ? 0 : Math.PI)) * 0.7;
+        } else if (action === "arcade" || action === "game") {
+          left = -1 + Math.sin(t * 11 + index) * 0.08;
+          right = -1 + Math.cos(t * 13 + index) * 0.08;
+        } else if (action === "chat") {
+          left = -0.3 + Math.sin(t * 1.7 + index) * 0.35;
+          right = -0.2 + Math.sin(t * 2.3 + index + 1) * 0.3;
+        } else if (action === "sit") {
+          left = -0.35;
+          right = -0.35;
+        } else if (working) {
+          // Typing, with a stretch now and then.
+          const stretching = !atMeeting && (t + index * 5.3) % 28 < 1.6;
+          const base = stretching ? -2.9 : atMeeting ? -0.35 : -0.75;
+          const amplitude = stretching ? 0 : atMeeting ? 0.25 : 0.12;
+          left = base + Math.sin(t * 7 + index) * amplitude;
+          right = base + Math.cos(t * 7 + index) * amplitude;
+        }
+        armLeft.current.rotation.x = dampValue(armLeft.current.rotation.x, left, 10, dt);
+        armRight.current.rotation.x = dampValue(armRight.current.rotation.x, right, 10, dt);
       }
     }
 
     if (body.current) {
       body.current.position.y = walking
         ? Math.abs(Math.sin(phase.current)) * 0.035
-        : working
-          ? Math.sin(state.clock.elapsedTime * 2 + index) * 0.012
-          : Math.sin(state.clock.elapsedTime * 0.9 + index) * 0.008;
+        : action === "game"
+          ? -0.1
+          : action === "sit"
+            ? 0.02
+            : action === "chat"
+              ? Math.abs(Math.sin(t * 1.3 + index)) * 0.02
+              : working
+                ? Math.sin(t * 2 + index) * 0.012
+                : Math.sin(t * 0.9 + index) * 0.008;
     }
   });
 
@@ -605,6 +695,7 @@ function WalkingAvatar({
           height={0.55 * labelScale}
           color="#e4e4e7"
         />
+        {icon ? <TextSprite text={ACTION_ICON[icon]} position={[0, 2.3, 0]} height={0.42 * labelScale} /> : null}
       </group>
 
       <mesh rotation-x={-Math.PI / 2} position={[0, 0.035, 0]}>
@@ -689,7 +780,7 @@ function Lounge({ labelScale }: { labelScale: number }) {
           <mesh position={[0, 0.32, 0]} material={MAT.sofa}>
             <boxGeometry args={[2.2, 0.4, 1]} />
           </mesh>
-          <mesh position={[0, 0.72, 0.42]} material={MAT.sofa}>
+          <mesh position={[0, 0.72, -0.42]} material={MAT.sofa}>
             <boxGeometry args={[2.2, 0.7, 0.14]} />
           </mesh>
           {[-1.15, 1.15].map((arm) => (
@@ -700,13 +791,13 @@ function Lounge({ labelScale }: { labelScale: number }) {
         </group>
       ))}
 
-      <mesh rotation-x={-Math.PI / 2} position={[0, 0.02, 0]} material={MAT.rug}>
+      <mesh rotation-x={-Math.PI / 2} position={[0, 0.02, 1.4]} material={MAT.rug}>
         <circleGeometry args={[2.8, 32]} />
       </mesh>
-      <mesh position={[0, 0.32, -0.2]} material={MAT.deskTop}>
+      <mesh position={[0, 0.32, 1.9]} material={MAT.deskTop}>
         <cylinderGeometry args={[0.75, 0.75, 0.06, 24]} />
       </mesh>
-      <mesh position={[0, 0.18, -0.2]} material={MAT.metal}>
+      <mesh position={[0, 0.18, 1.9]} material={MAT.metal}>
         <cylinderGeometry args={[0.18, 0.24, 0.36, 12]} />
       </mesh>
       {[-5.2, 5.2].map((x) => (
@@ -720,7 +811,170 @@ function Lounge({ labelScale }: { labelScale: number }) {
         </group>
       ))}
 
-      <TextSprite text="Descanso" position={[0, 1.5, 0]} height={0.65 * labelScale} color="#a1a1aa" />
+      <TextSprite text="Descanso" position={[0, 2.7, 0]} height={0.65 * labelScale} color="#a1a1aa" />
+    </group>
+  );
+}
+
+/** Emissive screen that slowly cycles colour, like something is playing on it. */
+function GlowScreen({
+  size,
+  offset,
+  position,
+  rotation,
+}: {
+  size: [number, number];
+  offset: number;
+  position: [number, number, number];
+  rotation?: [number, number, number];
+}) {
+  const material = useMemo(
+    () => new THREE.MeshStandardMaterial({ color: "#05070a", emissive: "#38bdf8", emissiveIntensity: 1, roughness: 0.3 }),
+    [],
+  );
+  useEffect(() => () => material.dispose(), [material]);
+  useFrame(({ clock }) => {
+    const t = clock.elapsedTime;
+    material.emissive.setHSL((t * 0.06 + offset) % 1, 0.75, 0.42);
+    material.emissiveIntensity = 0.8 + Math.sin(t * 5 + offset * 10) * 0.15;
+  });
+
+  return (
+    <mesh position={position} rotation={rotation} material={material}>
+      <planeGeometry args={size} />
+    </mesh>
+  );
+}
+
+function GameRoom({ labelScale }: { labelScale: number }) {
+  const ball = useRef<THREE.Mesh>(null);
+
+  // The ball only flies while both players are at the table.
+  useFrame(({ clock }) => {
+    const mesh = ball.current;
+    if (!mesh) return;
+    const live = PINGPONG_SPOTS.every((index) => arrivedSpots.has(index));
+    mesh.visible = live;
+    if (!live) return;
+    const t = clock.elapsedTime * 2.6;
+    mesh.position.set(-Math.cos(t) * 1.2, 0.84 + Math.abs(Math.cos(t)) * 0.32, Math.sin(t * 0.5) * 0.3);
+  });
+
+  return (
+    <group position={[-11, 0, 15]}>
+      <mesh rotation-x={-Math.PI / 2} position={[0, 0.015, 0]}>
+        <planeGeometry args={[7, 4.6]} />
+        <meshBasicMaterial color="#0c131a" transparent opacity={0.75} />
+      </mesh>
+      <BlobShadow radius={1.4} />
+      <mesh position={[0, 0.76, 0]} material={MAT.table}>
+        <boxGeometry args={[2.7, 0.06, 1.5]} />
+      </mesh>
+      <mesh position={[0, 0.795, 0]} material={MAT.mug}>
+        <boxGeometry args={[2.7, 0.005, 0.03]} />
+      </mesh>
+      <mesh position={[0, 0.86, 0]} material={MAT.mug}>
+        <boxGeometry args={[0.02, 0.14, 1.6]} />
+      </mesh>
+      {[-1.15, 1.15].map((x) =>
+        [-0.6, 0.6].map((z) => (
+          <mesh key={`${x}-${z}`} position={[x, 0.37, z]} material={MAT.metal}>
+            <boxGeometry args={[0.06, 0.74, 0.06]} />
+          </mesh>
+        )),
+      )}
+      <mesh ref={ball} visible={false} material={MAT.lamp}>
+        <sphereGeometry args={[0.04, 8, 6]} />
+      </mesh>
+      <TextSprite text="Zona de juegos" position={[0, 2.4, 0]} height={0.6 * labelScale} color="#f472b6" />
+    </group>
+  );
+}
+
+function Arcades() {
+  return (
+    <group>
+      {[13.5, 15.5].map((z, index) => (
+        <group key={z} position={[-19.7, 0, z]} rotation-y={Math.PI / 2}>
+          <mesh position={[0, 0.9, 0]} material={MAT.dark}>
+            <boxGeometry args={[0.8, 1.8, 0.7]} />
+          </mesh>
+          <mesh position={[0, 1.92, 0.02]} material={MAT.trim}>
+            <boxGeometry args={[0.8, 0.22, 0.72]} />
+          </mesh>
+          <GlowScreen size={[0.62, 0.48]} offset={index * 0.4} position={[0, 1.4, 0.36]} rotation={[-0.15, 0, 0]} />
+          <mesh position={[0, 1.02, 0.45]} material={MAT.metal}>
+            <boxGeometry args={[0.8, 0.08, 0.35]} />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
+function GamingLounge({ labelScale }: { labelScale: number }) {
+  const bags = IDLE_SPOTS.filter((spot) => spot.action === "game");
+
+  return (
+    <group>
+      <mesh rotation-x={-Math.PI / 2} position={[16.8, 0.02, 15.5]} material={MAT.rug}>
+        <circleGeometry args={[2.5, 32]} />
+      </mesh>
+      {bags.map((bag, index) => (
+        <mesh
+          key={index}
+          position={[bag.position[0] - 0.05, 0.24, bag.position[2]]}
+          scale={[1, 0.5, 1]}
+          material={index % 2 ? MAT.beanbagAlt : MAT.beanbag}
+        >
+          <sphereGeometry args={[0.55, 14, 10]} />
+        </mesh>
+      ))}
+      <group position={[19.9, 0, 15.5]} rotation-y={-Math.PI / 2}>
+        <mesh position={[0, 0.25, 0]} material={MAT.dark}>
+          <boxGeometry args={[1.8, 0.5, 0.5]} />
+        </mesh>
+        <mesh position={[0, 1.7, -0.05]} material={MAT.metal}>
+          <boxGeometry args={[2.8, 1.6, 0.08]} />
+        </mesh>
+        <GlowScreen size={[2.6, 1.42]} offset={0.7} position={[0, 1.7, 0]} />
+      </group>
+      <TextSprite text="Gaming" position={[17, 3, 15.5]} height={0.6 * labelScale} color="#a78bfa" />
+    </group>
+  );
+}
+
+function ChatCorner() {
+  return (
+    <group position={[0, 0, 16]}>
+      <BlobShadow radius={0.6} />
+      <mesh position={[0, 1.05, 0]} material={MAT.deskTop}>
+        <cylinderGeometry args={[0.45, 0.45, 0.05, 20]} />
+      </mesh>
+      <mesh position={[0, 0.53, 0]} material={MAT.metal}>
+        <cylinderGeometry args={[0.04, 0.04, 1.05, 8]} />
+      </mesh>
+      <mesh position={[0, 0.02, 0]} material={MAT.metal}>
+        <cylinderGeometry args={[0.3, 0.3, 0.04, 16]} />
+      </mesh>
+      {[-0.15, 0.18].map((x) => (
+        <mesh key={x} position={[x, 1.13, 0.1]} material={MAT.mug}>
+          <cylinderGeometry args={[0.05, 0.045, 0.1, 10]} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function WaterCooler() {
+  return (
+    <group position={[16.5, 0, -20.2]}>
+      <mesh position={[0, 0.5, 0]} material={MAT.pot}>
+        <boxGeometry args={[0.5, 1, 0.5]} />
+      </mesh>
+      <mesh position={[0, 1.27, 0]} material={MAT.glass}>
+        <cylinderGeometry args={[0.2, 0.2, 0.55, 14]} />
+      </mesh>
     </group>
   );
 }
