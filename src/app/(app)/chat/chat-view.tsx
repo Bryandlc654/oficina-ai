@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { Hash, Send } from "lucide-react";
+import Link from "next/link";
+import { ArrowUpRight, Hash, ListTodo, Send } from "lucide-react";
 import { Markdown } from "@/components/markdown";
 import { useOfficeEvents, type OfficeEvent } from "@/components/realtime/realtime-provider";
+import { extractTaskProposal, type TaskProposal } from "@/lib/chat-format";
 import { AGENT_STATUS_DOT, AGENT_STATUS_LABELS } from "@/lib/constants";
 import { cn, initials, timeAgo } from "@/lib/format";
 
@@ -224,8 +226,9 @@ export function ChatView({ agents, initialMessages }: { agents: ChatAgent[]; ini
             </p>
           ) : null}
 
-          {messages.map((message) =>
-            message.authorType === "ADMIN" ? (
+          {messages.map((message) => {
+            const { body, proposal } = extractTaskProposal(message.content);
+            return message.authorType === "ADMIN" ? (
               <div key={message.id} className="flex justify-end">
                 <div className="max-w-[80%] rounded-2xl rounded-br-md bg-emerald-500/15 px-3.5 py-2 text-[13px] leading-relaxed text-emerald-50">
                   <p className="whitespace-pre-wrap break-words">
@@ -246,12 +249,15 @@ export function ChatView({ agents, initialMessages }: { agents: ChatAgent[]; ini
                     <span className="font-medium text-zinc-300">{message.agent?.name}</span> · {timeAgo(message.createdAt)}
                   </p>
                   <div className="rounded-2xl rounded-tl-md bg-white/[0.04] px-3.5 py-2">
-                    <Markdown content={message.content} className="[&_p:last-child]:mb-0 [&_p]:text-zinc-300" />
+                    <Markdown content={body} className="[&_p:last-child]:mb-0 [&_p]:text-zinc-300" />
                   </div>
+                  {proposal && message.agentId ? (
+                    <TaskProposalCard proposal={proposal} agentId={message.agentId} />
+                  ) : null}
                 </div>
               </div>
-            ),
-          )}
+            );
+          })}
 
           {typingNames.length > 0 ? (
             <p className="flex items-center gap-2 text-[11px] text-zinc-500">
@@ -308,6 +314,57 @@ export function ChatView({ agents, initialMessages }: { agents: ChatAgent[]; ini
           </div>
         </footer>
       </section>
+    </div>
+  );
+}
+
+function TaskProposalCard({ proposal, agentId }: { proposal: TaskProposal; agentId: string }) {
+  const [taskId, setTaskId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function create() {
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/tasks", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: proposal.title, objective: proposal.objective, agentIds: [agentId] }),
+      });
+      const body = (await response.json().catch(() => null)) as
+        | { task?: { id: string }; error?: { message?: string } }
+        | null;
+      if (!response.ok || !body?.task) throw new Error(body?.error?.message ?? "No se pudo crear la tarea");
+      setTaskId(body.task.id);
+    } catch (createError) {
+      setError((createError as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-2 rounded-xl border border-emerald-500/20 bg-emerald-500/[0.05] px-3 py-2.5">
+      <p className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.14em] text-emerald-300/80">
+        <ListTodo className="h-3 w-3" />
+        Propuesta de tarea
+      </p>
+      <p className="mt-1 text-[13px] font-medium text-zinc-100">{proposal.title}</p>
+      <p className="mt-0.5 line-clamp-3 text-[11px] leading-relaxed text-zinc-400">{proposal.objective}</p>
+      {error ? <p className="mt-1.5 text-[11px] text-rose-300">{error}</p> : null}
+      <div className="mt-2">
+        {taskId ? (
+          <Link href={`/tasks/${taskId}`} className="inline-flex items-center gap-1 text-xs font-medium text-emerald-300 hover:text-emerald-200">
+            Tarea creada · ver
+            <ArrowUpRight className="h-3.5 w-3.5" />
+          </Link>
+        ) : (
+          <button type="button" onClick={() => void create()} disabled={busy} className="btn-primary h-8 px-3 text-xs">
+            {busy ? "Creando…" : "Crear tarea"}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
