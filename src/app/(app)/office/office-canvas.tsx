@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
-import { Line, OrbitControls, Sparkles } from "@react-three/drei";
+import { Line, OrbitControls, PerformanceMonitor, Sparkles } from "@react-three/drei";
 import * as THREE from "three";
 import type { OfficeAgent, OfficeDepartment } from "./types";
 
@@ -11,6 +11,28 @@ const STATUS_COLOR: Record<string, string> = {
   AVAILABLE: "#34d399",
   ON_BREAK: "#38bdf8",
   OFFLINE: "#52525b",
+};
+
+// Shared across every mesh: one material per look instead of one per mesh.
+const MAT = {
+  wall: new THREE.MeshStandardMaterial({ color: "#101823", roughness: 0.9 }),
+  trim: new THREE.MeshStandardMaterial({ color: "#34d399", emissive: "#34d399", emissiveIntensity: 0.45 }),
+  glass: new THREE.MeshStandardMaterial({ color: "#0f2433", emissive: "#12384d", emissiveIntensity: 0.55, roughness: 0.2 }),
+  frame: new THREE.MeshStandardMaterial({ color: "#1f2b38", roughness: 0.6 }),
+  deskTop: new THREE.MeshStandardMaterial({ color: "#5a4535", roughness: 0.55 }),
+  metal: new THREE.MeshStandardMaterial({ color: "#1a2430", roughness: 0.5, metalness: 0.6 }),
+  dark: new THREE.MeshStandardMaterial({ color: "#151d27", roughness: 0.85 }),
+  fabric: new THREE.MeshStandardMaterial({ color: "#243243", roughness: 0.95 }),
+  sofa: new THREE.MeshStandardMaterial({ color: "#2b3f55", roughness: 0.95 }),
+  pot: new THREE.MeshStandardMaterial({ color: "#d6d3d1", roughness: 0.7 }),
+  stem: new THREE.MeshStandardMaterial({ color: "#3f5a3a", roughness: 0.9 }),
+  leaf: new THREE.MeshStandardMaterial({ color: "#2f7a55", roughness: 0.85 }),
+  leafLight: new THREE.MeshStandardMaterial({ color: "#3f9a68", roughness: 0.85 }),
+  mug: new THREE.MeshStandardMaterial({ color: "#e4e4e7", roughness: 0.6 }),
+  screenOff: new THREE.MeshStandardMaterial({ color: "#0b1118", emissive: "#0f1720", emissiveIntensity: 0.2, roughness: 0.4 }),
+  lamp: new THREE.MeshStandardMaterial({ color: "#fde68a", emissive: "#fbbf24", emissiveIntensity: 1.4 }),
+  rug: new THREE.MeshStandardMaterial({ color: "#3a2f4a", roughness: 1 }),
+  shadow: new THREE.MeshBasicMaterial({ color: "#000000", transparent: true, opacity: 0.35, depthWrite: false }),
 };
 
 const SKIN = ["#e9b48c", "#f2c9a8", "#c98e63", "#9a6a48", "#f5d6bd"];
@@ -103,25 +125,27 @@ export function OfficeCanvas({
   onSelect: (id: string | null) => void;
 }) {
   const { zones, placed } = useSceneLayout(agents, departments);
+  const [dpr, setDpr] = useState(1.25);
 
   return (
     <Canvas
-      dpr={[1, 1.5]}
+      dpr={dpr}
       camera={{ position: [0, 17, 24], fov: 48 }}
       gl={{ antialias: true, powerPreference: "high-performance" }}
       onPointerMissed={() => onSelect(null)}
     >
+      <PerformanceMonitor onDecline={() => setDpr(0.85)} onIncline={() => setDpr(1.25)} flipflops={3} />
       <color attach="background" args={["#05070a"]} />
       <fog attach="fog" args={["#05070a", 24, 50]} />
 
-      <hemisphereLight args={["#334155", "#05070a", 0.7]} />
-      <ambientLight intensity={1.05} />
-      <directionalLight position={[10, 18, 9]} intensity={1.35} />
-      <pointLight position={[0, 8, 0]} intensity={30} distance={26} color="#34d399" />
-      <pointLight position={[0, 9, -8]} intensity={18} distance={30} color="#bfdbfe" />
+      {/* No point lights: they cost per pixel on every mesh. Accents are emissive instead. */}
+      <hemisphereLight args={["#9fb4cc", "#0b1016", 1.1]} />
+      <ambientLight intensity={0.55} />
+      <directionalLight position={[10, 18, 9]} intensity={1.6} color="#fff4e0" />
+      <directionalLight position={[-12, 10, -6]} intensity={0.5} color="#7dd3fc" />
 
       <Floor />
-      <Sparkles count={70} scale={[44, 7, 32]} position={[0, 3.5, -2]} size={2.2} speed={0.25} opacity={0.35} color="#6ee7b7" />
+      <Sparkles count={36} scale={[44, 7, 32]} position={[0, 3.5, -2]} size={2.2} speed={0.25} opacity={0.35} color="#6ee7b7" />
 
       <SceneContent
         zones={zones}
@@ -239,6 +263,13 @@ function SceneContent({
 
       <MeetingTable active={meetingActive} labelScale={labelScale} />
       <Lounge labelScale={labelScale} />
+      <CoffeeBar />
+      <Bookshelves />
+      <StatusScreen
+        working={placed.filter((entry) => entry.agent.status === "WORKING").length}
+        total={placed.length}
+        labelScale={labelScale}
+      />
       <Plants />
 
       {placed.map((entry, index) => {
@@ -265,42 +296,35 @@ function Walls({ labelScale }: { labelScale: number }) {
 
   return (
     <group>
-      <mesh position={[0, 2.5, -21]}>
+      <mesh position={[0, 2.5, -21]} material={MAT.wall}>
         <boxGeometry args={[42, 5, 0.4]} />
-        <meshStandardMaterial color="#0b1118" roughness={0.9} />
       </mesh>
-      <mesh position={[0, 5.05, -21]}>
+      <mesh position={[0, 5.05, -21]} material={MAT.trim}>
         <boxGeometry args={[42, 0.14, 0.5]} />
-        <meshStandardMaterial color="#34d399" emissive="#34d399" emissiveIntensity={0.35} />
       </mesh>
 
       {windowPositions.map((x) => (
         <group key={x}>
-          <mesh position={[x, 2.75, -20.76]}>
+          <mesh position={[x, 2.75, -20.76]} material={MAT.glass}>
             <planeGeometry args={[3.7, 2.3]} />
-            <meshStandardMaterial color="#0d1a24" emissive="#0e2a3a" emissiveIntensity={0.4} />
           </mesh>
-          <mesh position={[x + 2, 2.75, -20.72]}>
+          <mesh position={[x + 2, 2.75, -20.72]} material={MAT.frame}>
             <boxGeometry args={[0.08, 2.5, 0.08]} />
-            <meshStandardMaterial color="#1a2632" />
           </mesh>
         </group>
       ))}
 
       {[-20.5, 20.5].map((x) => (
         <group key={x}>
-          <mesh position={[x, 2.5, 0]}>
+          <mesh position={[x, 2.5, 0]} material={MAT.wall}>
             <boxGeometry args={[0.4, 5, 42]} />
-            <meshStandardMaterial color="#0b1118" roughness={0.9} />
           </mesh>
-          <mesh position={[x, 5.05, 0]}>
+          <mesh position={[x, 5.05, 0]} material={MAT.trim}>
             <boxGeometry args={[0.5, 0.14, 42]} />
-            <meshStandardMaterial color="#34d399" emissive="#34d399" emissiveIntensity={0.25} />
           </mesh>
-          {[-9, 0, 9].map((z) => (
-            <mesh key={z} position={[x - Math.sign(x) * 0.23, 2.7, z]} rotation-y={-Math.sign(x) * Math.PI / 2}>
+          {[-9, 9].map((z) => (
+            <mesh key={z} position={[x - Math.sign(x) * 0.23, 2.7, z]} rotation-y={-Math.sign(x) * Math.PI / 2} material={MAT.glass}>
               <planeGeometry args={[5.5, 2.2]} />
-              <meshStandardMaterial color="#0d1a24" emissive="#0e2a3a" emissiveIntensity={0.3} />
             </mesh>
           ))}
         </group>
@@ -312,7 +336,6 @@ function Walls({ labelScale }: { labelScale: number }) {
         height={0.72 * labelScale}
         color="#6ee7b7"
       />
-      <pointLight position={[0, 3.4, -18]} intensity={14} distance={18} color="#38bdf8" />
     </group>
   );
 }
@@ -322,9 +345,9 @@ function Floor() {
     <group>
       <mesh rotation-x={-Math.PI / 2} position={[0, 0, 0]}>
         <planeGeometry args={[66, 50]} />
-        <meshStandardMaterial color="#0b121a" roughness={0.55} metalness={0.35} />
+        <meshStandardMaterial color="#121a24" roughness={0.6} metalness={0.25} />
       </mesh>
-      <gridHelper args={[66, 66, "#28343f", "#151d26"]} position={[0, 0.01, 0]} />
+      <gridHelper args={[66, 33, "#1f2a36", "#18212b"]} position={[0, 0.01, 0]} />
     </group>
   );
 }
@@ -370,9 +393,8 @@ function DeskStation({
 // Static fake shadow: the real ones (ContactShadows) re-render the scene every frame.
 function BlobShadow({ radius, position = [0, 0.03, 0] }: { radius: number; position?: [number, number, number] }) {
   return (
-    <mesh rotation-x={-Math.PI / 2} position={position}>
-      <circleGeometry args={[radius, 24]} />
-      <meshBasicMaterial color="#000000" transparent opacity={0.35} depthWrite={false} />
+    <mesh rotation-x={-Math.PI / 2} position={position} material={MAT.shadow}>
+      <circleGeometry args={[radius, 20]} />
     </mesh>
   );
 }
@@ -381,34 +403,35 @@ function Desk({ color, working }: { color: string; working: boolean }) {
   return (
     <group>
       <BlobShadow radius={0.95} position={[0, 0.03, 0.7]} />
-      <mesh position={[0, 0.56, 0.85]}>
+      <mesh position={[0, 0.56, 0.85]} material={MAT.deskTop}>
         <boxGeometry args={[1.6, 0.08, 0.85]} />
-        <meshStandardMaterial color="#263241" roughness={0.78} />
       </mesh>
       {[-0.7, 0.7].map((x) =>
         [-0.3, 0.3].map((z) => (
-          <mesh key={`${x}-${z}`} position={[x, 0.28, 0.85 + z]}>
+          <mesh key={`${x}-${z}`} position={[x, 0.28, 0.85 + z]} material={MAT.metal}>
             <boxGeometry args={[0.07, 0.56, 0.07]} />
-            <meshStandardMaterial color="#18222e" roughness={0.9} />
           </mesh>
         )),
       )}
 
-      <mesh position={[0, 0.68, 1.05]}>
+      <mesh position={[0, 0.68, 1.05]} material={MAT.metal}>
         <boxGeometry args={[0.08, 0.2, 0.08]} />
-        <meshStandardMaterial color="#18222e" />
       </mesh>
       <mesh position={[0, 0.52, 0.425]}>
         <boxGeometry args={[1.6, 0.03, 0.02]} />
         <meshStandardMaterial color={color} emissive={color} emissiveIntensity={working ? 0.9 : 0.25} />
       </mesh>
-      <mesh position={[0, 0.93, 1.1]}>
+      <mesh position={[0, 0.93, 1.1]} material={MAT.metal}>
         <boxGeometry args={[0.84, 0.52, 0.03]} />
-        <meshStandardMaterial color="#111820" roughness={0.4} metalness={0.5} />
       </mesh>
-      <mesh position={[0.6, 0.65, 0.95]}>
-        <cylinderGeometry args={[0.05, 0.045, 0.1, 12]} />
-        <meshStandardMaterial color="#e4e4e7" roughness={0.6} />
+      <mesh position={[0.6, 0.65, 0.95]} material={MAT.mug}>
+        <cylinderGeometry args={[0.05, 0.045, 0.1, 10]} />
+      </mesh>
+      <mesh position={[-0.62, 0.66, 1.05]} material={MAT.pot}>
+        <cylinderGeometry args={[0.07, 0.06, 0.12, 10]} />
+      </mesh>
+      <mesh position={[-0.62, 0.8, 1.05]} material={MAT.leafLight}>
+        <icosahedronGeometry args={[0.11, 0]} />
       </mesh>
       <mesh position={[0, 0.93, 1.08]}>
         <boxGeometry args={[0.78, 0.46, 0.04]} />
@@ -419,18 +442,15 @@ function Desk({ color, working }: { color: string; working: boolean }) {
           roughness={0.5}
         />
       </mesh>
-      <mesh position={[0, 0.61, 0.72]}>
+      <mesh position={[0, 0.61, 0.72]} material={MAT.dark}>
         <boxGeometry args={[0.52, 0.02, 0.16]} />
-        <meshStandardMaterial color="#22303e" />
       </mesh>
 
-      <mesh position={[0, 0.38, 0.45]}>
-        <cylinderGeometry args={[0.26, 0.26, 0.07, 16]} />
-        <meshStandardMaterial color="#1b2633" roughness={0.8} />
+      <mesh position={[0, 0.38, 0.45]} material={MAT.fabric}>
+        <cylinderGeometry args={[0.26, 0.26, 0.07, 14]} />
       </mesh>
-      <mesh position={[0, 0.66, 0.62]}>
+      <mesh position={[0, 0.66, 0.62]} material={MAT.fabric}>
         <boxGeometry args={[0.42, 0.5, 0.07]} />
-        <meshStandardMaterial color="#1b2633" roughness={0.8} />
       </mesh>
     </group>
   );
@@ -535,16 +555,16 @@ function WalkingAvatar({
       <BlobShadow radius={0.34} />
       <group ref={body}>
         <mesh position={[0, 0.8, 0]}>
-          <capsuleGeometry args={[0.24, 0.44, 6, 12]} />
+          <capsuleGeometry args={[0.24, 0.44, 4, 10]} />
           <meshStandardMaterial color={agent.department.color} roughness={0.65} />
         </mesh>
 
         <mesh position={[0, 1.32, 0]}>
-          <sphereGeometry args={[0.2, 20, 20]} />
+          <sphereGeometry args={[0.2, 14, 12]} />
           <meshStandardMaterial color={skin} roughness={0.8} />
         </mesh>
         <mesh position={[0, 1.4, -0.02]} scale={[1, 0.55, 1]}>
-          <sphereGeometry args={[0.205, 16, 16]} />
+          <sphereGeometry args={[0.205, 12, 10]} />
           <meshStandardMaterial color="#1f2937" roughness={0.9} />
         </mesh>
 
@@ -612,9 +632,9 @@ function MeetingTable({ active, labelScale }: { active: boolean; labelScale: num
       <mesh position={[0, 0.72, 0]}>
         <cylinderGeometry args={[2.2, 2.2, 0.12, 40]} />
         <meshStandardMaterial
-          color="#1d2834"
-          emissive={active ? "#fbbf24" : "#0f1720"}
-          emissiveIntensity={active ? 0.18 : 0.05}
+          color="#4a3a2d"
+          emissive={active ? "#fbbf24" : "#000000"}
+          emissiveIntensity={active ? 0.08 : 0}
           roughness={0.55}
         />
       </mesh>
@@ -629,13 +649,11 @@ function MeetingTable({ active, labelScale }: { active: boolean; labelScale: num
         const z = Math.sin(angle) * 2.9;
         return (
           <group key={index} position={[x, 0, z]} rotation-y={Math.atan2(-x, -z)}>
-            <mesh position={[0, 0.3, 0]}>
+            <mesh position={[0, 0.3, 0]} material={MAT.fabric}>
               <boxGeometry args={[0.48, 0.08, 0.48]} />
-              <meshStandardMaterial color="#141c26" roughness={0.85} />
             </mesh>
-            <mesh position={[0, 0.56, 0.22]}>
+            <mesh position={[0, 0.56, 0.22]} material={MAT.fabric}>
               <boxGeometry args={[0.48, 0.44, 0.07]} />
-              <meshStandardMaterial color="#141c26" roughness={0.85} />
             </mesh>
           </group>
         );
@@ -668,28 +686,41 @@ function Lounge({ labelScale }: { labelScale: number }) {
 
       {[-3.6, 3.6].map((x) => (
         <group key={x} position={[x, 0, 0.8]}>
-          <mesh position={[0, 0.32, 0]}>
+          <mesh position={[0, 0.32, 0]} material={MAT.sofa}>
             <boxGeometry args={[2.2, 0.4, 1]} />
-            <meshStandardMaterial color="#151e28" roughness={0.9} />
           </mesh>
-          <mesh position={[0, 0.72, 0.42]}>
+          <mesh position={[0, 0.72, 0.42]} material={MAT.sofa}>
             <boxGeometry args={[2.2, 0.7, 0.14]} />
-            <meshStandardMaterial color="#151e28" roughness={0.9} />
+          </mesh>
+          {[-1.15, 1.15].map((arm) => (
+            <mesh key={arm} position={[arm, 0.5, 0.05]} material={MAT.sofa}>
+              <boxGeometry args={[0.16, 0.5, 0.9]} />
+            </mesh>
+          ))}
+        </group>
+      ))}
+
+      <mesh rotation-x={-Math.PI / 2} position={[0, 0.02, 0]} material={MAT.rug}>
+        <circleGeometry args={[2.8, 32]} />
+      </mesh>
+      <mesh position={[0, 0.32, -0.2]} material={MAT.deskTop}>
+        <cylinderGeometry args={[0.75, 0.75, 0.06, 24]} />
+      </mesh>
+      <mesh position={[0, 0.18, -0.2]} material={MAT.metal}>
+        <cylinderGeometry args={[0.18, 0.24, 0.36, 12]} />
+      </mesh>
+      {[-5.2, 5.2].map((x) => (
+        <group key={x} position={[x, 0, 0.6]}>
+          <mesh position={[0, 0.8, 0]} material={MAT.metal}>
+            <cylinderGeometry args={[0.03, 0.03, 1.6, 6]} />
+          </mesh>
+          <mesh position={[0, 1.65, 0]} material={MAT.lamp}>
+            <coneGeometry args={[0.28, 0.32, 14, 1, true]} />
           </mesh>
         </group>
       ))}
 
-      <mesh position={[0, 0.32, -0.2]}>
-        <cylinderGeometry args={[0.75, 0.75, 0.06, 24]} />
-        <meshStandardMaterial color="#22303e" roughness={0.6} />
-      </mesh>
-      <mesh position={[0, 0.18, -0.2]}>
-        <cylinderGeometry args={[0.18, 0.24, 0.36, 12]} />
-        <meshStandardMaterial color="#121a24" />
-      </mesh>
-
       <TextSprite text="Descanso" position={[0, 1.5, 0]} height={0.65 * labelScale} color="#a1a1aa" />
-      <pointLight position={[0, 3, 0]} intensity={12} distance={12} color="#fbbf24" />
     </group>
   );
 }
@@ -708,20 +739,121 @@ function Plants() {
     <group>
       {spots.map(([x, z], index) => (
         <group key={`${x}-${z}`} position={[x, 0, z]}>
-          <mesh position={[0, 0.28, 0]}>
+          <mesh position={[0, 0.28, 0]} material={MAT.pot}>
             <cylinderGeometry args={[0.34, 0.44, 0.56, 12]} />
-            <meshStandardMaterial color="#151d26" roughness={0.9} />
           </mesh>
-          <mesh position={[0, 0.9, 0]}>
-            <cylinderGeometry args={[0.06, 0.08, 0.8, 8]} />
-            <meshStandardMaterial color="#2f4235" roughness={0.9} />
+          <mesh position={[0, 0.9, 0]} material={MAT.stem}>
+            <cylinderGeometry args={[0.06, 0.08, 0.8, 6]} />
           </mesh>
-          <mesh position={[0, 1.35, 0]}>
-            <sphereGeometry args={[0.52 + (index % 3) * 0.06, 12, 12]} />
-            <meshStandardMaterial color="#1f4d3d" roughness={0.9} />
+          <mesh position={[0, 1.35, 0]} material={MAT.leaf}>
+            <icosahedronGeometry args={[0.52 + (index % 3) * 0.06, 1]} />
+          </mesh>
+          <mesh position={[0.18, 1.75, 0.1]} material={MAT.leafLight}>
+            <icosahedronGeometry args={[0.32, 1]} />
           </mesh>
         </group>
       ))}
+    </group>
+  );
+}
+
+function CoffeeBar() {
+  return (
+    <group position={[-8.5, 0, -19.6]}>
+      <mesh position={[0, 0.5, 0]} material={MAT.dark}>
+        <boxGeometry args={[3.2, 1, 0.8]} />
+      </mesh>
+      <mesh position={[0, 1.03, 0]} material={MAT.deskTop}>
+        <boxGeometry args={[3.3, 0.06, 0.9]} />
+      </mesh>
+      <mesh position={[-0.9, 1.36, -0.1]} material={MAT.metal}>
+        <boxGeometry args={[0.5, 0.6, 0.45]} />
+      </mesh>
+      <mesh position={[-0.9, 1.5, 0.13]} material={MAT.trim}>
+        <boxGeometry args={[0.2, 0.06, 0.02]} />
+      </mesh>
+      {[0.1, 0.35, 0.6].map((x) => (
+        <mesh key={x} position={[x, 1.11, 0.15]} material={MAT.mug}>
+          <cylinderGeometry args={[0.06, 0.05, 0.12, 10]} />
+        </mesh>
+      ))}
+      <mesh position={[1.2, 1.25, 0]} material={MAT.glass}>
+        <cylinderGeometry args={[0.18, 0.18, 0.4, 14]} />
+      </mesh>
+    </group>
+  );
+}
+
+const BOOK_COLORS = ["#34d399", "#38bdf8", "#fbbf24", "#f472b6", "#a78bfa", "#f87171", "#e4e4e7"];
+
+/** All books of every shelf in one instanced draw call. */
+function Bookshelves() {
+  const books = useRef<THREE.InstancedMesh>(null);
+  const shelves: [number, number, number][] = [
+    [-20.05, 0, -4.5],
+    [-20.05, 0, 4.5],
+    [20.05, 0, -4.5],
+    [20.05, 0, 4.5],
+  ];
+  const perShelf = 3 * 9;
+
+  useLayoutEffect(() => {
+    const mesh = books.current;
+    if (!mesh) return;
+    const matrix = new THREE.Matrix4();
+    const color = new THREE.Color();
+    let i = 0;
+    shelves.forEach(([x, , z]) => {
+      for (let row = 0; row < 3; row += 1) {
+        for (let n = 0; n < 9; n += 1) {
+          const h = 0.42 + ((i * 7) % 5) * 0.05;
+          matrix.makeScale(1, h, 1);
+          matrix.setPosition(x - Math.sign(x) * 0.05, 0.62 + row * 0.75 + h / 2, z - 1.2 + n * 0.27);
+          mesh.setMatrixAt(i, matrix);
+          mesh.setColorAt(i, color.set(BOOK_COLORS[(i * 3) % BOOK_COLORS.length] ?? "#e4e4e7"));
+          i += 1;
+        }
+      }
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <group>
+      {shelves.map(([x, , z]) => (
+        <group key={`${x}-${z}`} position={[x, 0, z]}>
+          <mesh position={[0, 1.5, 0]} material={MAT.frame}>
+            <boxGeometry args={[0.5, 3, 2.8]} />
+          </mesh>
+          {[0.6, 1.35, 2.1].map((y) => (
+            <mesh key={y} position={[-Math.sign(x) * 0.27, y, 0]} material={MAT.deskTop}>
+              <boxGeometry args={[0.06, 0.05, 2.7]} />
+            </mesh>
+          ))}
+        </group>
+      ))}
+      <instancedMesh ref={books} args={[undefined, undefined, shelves.length * perShelf]}>
+        <boxGeometry args={[0.32, 1, 0.2]} />
+        <meshStandardMaterial roughness={0.8} />
+      </instancedMesh>
+    </group>
+  );
+}
+
+function StatusScreen({ working, total, labelScale }: { working: number; total: number; labelScale: number }) {
+  return (
+    <group position={[8.5, 0, -20.7]}>
+      <mesh position={[0, 2.6, 0]} material={MAT.metal}>
+        <boxGeometry args={[4.4, 2.5, 0.12]} />
+      </mesh>
+      <mesh position={[0, 2.6, 0.07]}>
+        <planeGeometry args={[4.1, 2.2]} />
+        <meshStandardMaterial color="#04140f" emissive="#064e3b" emissiveIntensity={0.9} />
+      </mesh>
+      <TextSprite text={`${working}/${total} trabajando`} position={[0, 2.85, 0.2]} height={0.55 * labelScale} color="#6ee7b7" />
+      <TextSprite text={working > 0 ? "Oficina activa" : "En espera"} position={[0, 2.2, 0.2]} height={0.4 * labelScale} color="#a1a1aa" />
     </group>
   );
 }
