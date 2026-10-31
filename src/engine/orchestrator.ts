@@ -418,13 +418,7 @@ export async function runTask(taskId: string): Promise<void> {
         const message = errorMessage(error);
         await holdForApproval(taskId, {
           observations: "La revisión automática no pudo completarse. Los entregables quedan pendientes de decisión del director.",
-          finalReport: `## Revisión pendiente del director
-
-Los entregables de la tarea están completos, pero Control de calidad no pudo completar la revisión automática.
-
-Motivo: ${message}
-
-Revisa los entregables y usa "Aprobar y completar" o solicita cambios.`,
+          finalReport: `## Revisión pendiente del director\n\nLos entregables de la tarea están completos, pero Control de calidad no pudo completar la revisión automática.\n\nMotivo: ${message}\n\nRevisa los entregables y usa "Aprobar y completar" o solicita cambios.`,
         });
         return;
       }

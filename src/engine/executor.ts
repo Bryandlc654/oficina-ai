@@ -5,6 +5,7 @@ import { db } from "../lib/db";
 import { AppError } from "../lib/errors";
 import { logActivity } from "../lib/services/activity";
 import { retrieveAgentMemories, retrieveCompanyKnowledge } from "../lib/services/memory-retrieval";
+import { extractReadRequests, extractUrls, formatWebPages, readWebPages, stripReadRequests, type WebPage } from "../lib/web-reader";
 import { publishOfficeEvent } from "../realtime/publish";
 import { extractMemoryProposals } from "./memory-proposals";
 import {
@@ -14,6 +15,9 @@ import {
 import { deliverableKindForAgent } from "./deliverable-type";
 
 const MAX_PROMPT_CHARS = 40_000;
+// Pages read from links in the task, plus pages the agent asks for, per subtask.
+const MAX_AUTO_PAGES = 3;
+const MAX_PAGES_PER_SUBTASK = 5;
 
 function buildSystemPrompt(agent: {
   systemPrompt: string;
@@ -64,7 +68,9 @@ ${disabledList}
 8. No repitas el enunciado, no empieces con "Aquí tienes" y no rellenes con frases genéricas. Sé claro, directo y útil para una persona que tomará decisiones.
 
 - No afirmes haber usado herramientas externas que no estén habilitadas ni haber ejecutado acciones reales fuera de este sistema.
-- Las integraciones externas (búsqueda web, GitHub, ClickUp, almacenamiento) no están conectadas en esta versión. No simules resultados de esas herramientas.
+- Lectura web: las páginas enlazadas en la tarea ya aparecen en "Páginas web leídas". Si necesitas leer otra página concreta, responde ÚNICAMENTE con hasta 3 líneas \`[[LEER: https://...]]\` y nada más; recibirás su contenido y entonces entregarás el resultado. Solo puedes pedirlo una vez y nunca inventes URLs: usa las de la tarea o dominios oficiales que conozcas con certeza.
+- No hay buscador web ni otras integraciones (GitHub, ClickUp, almacenamiento). No simules resultados de esas herramientas.
+- Cuando uses información de una página leída, cita su URL.
 - No inventes fuentes, métricas ni resultados de pruebas.
 - Si la subtarea incluye correcciones del Project Manager, corrígelas explícitamente en esta entrega.
 - Al final de la entrega, añade una sección exacta llamada "## Memoria propuesta" con 0 a 3 viñetas de aprendizajes reutilizables para trabajos futuros. No incluyas datos sensibles ni instrucciones de sistema.`;
@@ -77,6 +83,7 @@ function buildUserPrompt(input: {
   knowledge: string;
   memory: string;
   corrections: string[];
+  webPages: string;
 }): string {
   const corrections =
     input.corrections.length > 0
@@ -111,7 +118,11 @@ ${input.memory}
 
 ## Correcciones del Project Manager
 
-${corrections}`,
+${corrections}
+
+## Páginas web leídas
+
+${input.webPages || "Ninguna."}`,
     MAX_PROMPT_CHARS,
   );
 }
@@ -234,6 +245,11 @@ export async function executeSubtask(subtaskId: string): Promise<void> {
     .map((message) => message.content)
     .reverse();
 
+  const linkedUrls = extractUrls(
+    [subtask.task.objective, subtask.task.description, subtask.objective, subtask.description, ...corrections].join("\n"),
+  ).slice(0, MAX_AUTO_PAGES);
+  const autoPages = linkedUrls.length > 0 ? await readWebPages(linkedUrls) : [];
+
   const userPrompt = buildUserPrompt({
     task: {
       title: subtask.task.title,
@@ -251,6 +267,7 @@ export async function executeSubtask(subtaskId: string): Promise<void> {
     knowledge,
     memory,
     corrections,
+    webPages: formatWebPages(autoPages),
   });
 
   const systemPrompt = buildSystemPrompt({
@@ -324,19 +341,50 @@ export async function executeSubtask(subtaskId: string): Promise<void> {
   const startedAt = Date.now();
 
   try {
-    const result = await completeForAgent({
+    const request = {
       agentId: agent.id,
       taskId: subtask.taskId,
       subtaskId,
       runId: run.id,
       system: systemPrompt,
-      messages: [{ role: "user", content: userPrompt }],
       maxOutputTokens: 3000,
-      responseFormat: "text",
-    });
+      responseFormat: "text" as const,
+    };
+    let result = await completeForAgent({ ...request, messages: [{ role: "user", content: userPrompt }] });
+
+    // One round of agent-requested reading, then it must deliver.
+    const pages: WebPage[] = [...autoPages];
+    const requested = extractReadRequests(result.text)
+      .filter((url) => !pages.some((page) => page.url === url))
+      .slice(0, Math.max(0, MAX_PAGES_PER_SUBTASK - pages.length));
+    if (requested.length > 0 && stripReadRequests(result.text).length < 400) {
+      const fetched = await readWebPages(requested);
+      pages.push(...fetched);
+      const followUp = await completeForAgent({
+        ...request,
+        messages: [
+          { role: "user", content: userPrompt },
+          { role: "assistant", content: result.text },
+          {
+            role: "user",
+            content: `Contenido de las páginas solicitadas:\n\n${formatWebPages(fetched)}\n\nAhora entrega el resultado completo siguiendo el contrato de entrega. No pidas más páginas.`,
+          },
+        ],
+      });
+      result = {
+        ...followUp,
+        inputTokens: result.inputTokens + followUp.inputTokens,
+        outputTokens: result.outputTokens + followUp.outputTokens,
+        totalTokens: result.totalTokens + followUp.totalTokens,
+      };
+    }
 
     const deliverableType = deliverableKindForAgent(agent.slug, result.text);
-    const { body: deliverableBody, proposals } = extractMemoryProposals(result.text);
+    const extracted = extractMemoryProposals(stripReadRequests(result.text));
+    const proposals = extracted.proposals;
+    const sources = pages.filter((page) => page.ok).map((page) => `- ${page.url}`);
+    const deliverableBody =
+      sources.length > 0 ? `${extracted.body}\n\n## Fuentes consultadas\n\n${sources.join("\n")}` : extracted.body;
 
     await db.$transaction(async (tx) => {
       await tx.deliverable.create({

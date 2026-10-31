@@ -4,6 +4,7 @@ import { publishOfficeEvent } from "../../realtime/publish";
 import { cleanReply } from "../chat-format";
 import { db } from "../db";
 import { NotFoundError } from "../errors";
+import { extractUrls, formatWebPages, readWebPages } from "../web-reader";
 import { retrieveAgentMemories, retrieveCompanyKnowledge } from "./memory-retrieval";
 
 export const GROUP_CHANNEL = "group";
@@ -11,6 +12,7 @@ const HISTORY_LIMIT = 24;
 const PAGE_SIZE = 100;
 const MAX_GROUP_REPLIES = 4;
 const EVERYONE = "todos";
+const MAX_CHAT_PAGES = 2;
 
 export function dmChannel(agentId: string): string {
   return `dm:${agentId}`;
@@ -123,11 +125,13 @@ async function replyInTurn(channel: string, agentIds: string[], agents: ChatAgen
 
       // Recent turns decide what the agent should recall about the company.
       const query = messages.slice(-3).map((message) => message.content).join("\n");
-      const [knowledge, memories] = await Promise.all([
+      const sharedUrls = extractUrls(messages[messages.length - 1]?.content ?? "").slice(0, MAX_CHAT_PAGES);
+      const [knowledge, memories, pages] = await Promise.all([
         retrieveCompanyKnowledge(query, 3000),
         retrieveAgentMemories(agent.id, query, 1500),
+        readWebPages(sharedUrls),
       ]);
-      const system = chatSystemPrompt(agent, channel, agents, knowledge, memories);
+      const system = chatSystemPrompt(agent, channel, agents, knowledge, memories, formatWebPages(pages));
 
       // Small free models sometimes loop or switch language; one cooler retry usually fixes it.
       let text = "";
@@ -192,6 +196,7 @@ function chatSystemPrompt(
   agents: ChatAgent[],
   knowledge: string,
   memories: string,
+  webPages: string,
 ): string {
   const setting =
     channel === GROUP_CHANNEL
@@ -213,10 +218,13 @@ ${knowledge || "No hay información registrada sobre la empresa."}
 ## Tu memoria
 ${memories || "Sin recuerdos relevantes."}
 
+## Páginas web compartidas en el último mensaje
+${webPages || "Ninguna."}
+
 ## Cómo responder en el chat
 - Es un chat de trabajo, no un informe: responde en español, en primera persona y con naturalidad, en 2 a 6 frases (máximo unas 120 palabras).
 - Nada de títulos, secciones numeradas ni planes completos. Como mucho, una lista corta de 3 puntos.
-- No puedes navegar por internet ni ver cuentas, webs o redes sociales reales. Nunca inventes datos de la empresa, cifras, clientes ni resultados: usa solo lo que sabes arriba o lo que diga el administrador.
+- Solo puedes leer las páginas cuyo enlace te compartan (su contenido aparece arriba); no tienes buscador ni acceso a cuentas privadas o métricas de redes sociales. Si te piden revisar una web sin enlace, pide el enlace. Nunca inventes datos de la empresa, cifras, clientes ni resultados: usa solo lo que sabes arriba o lo que diga el administrador.
 - Si falta información para ayudar bien, haz 1 o 2 preguntas concretas.
 - Si te piden un trabajo de verdad (auditorías, estrategias, documentos, campañas…), da una primera idea breve y propón convertirlo en tarea añadiendo al final, en una línea aparte, exactamente:
 [[TAREA: título corto | objetivo detallado con todo el contexto que se conoce]]
