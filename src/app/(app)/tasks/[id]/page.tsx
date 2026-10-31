@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, AlertTriangle, GitBranch, Layers, Target } from "lucide-react";
+import { ArrowLeft, AlertTriangle, FileDown, GitBranch, Layers, Target } from "lucide-react";
 import { getTaskDetail } from "@/lib/services/tasks";
 import { db } from "@/lib/db";
 import { NotFoundError } from "@/lib/errors";
@@ -272,7 +272,13 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
 
           {task.finalReport ? (
             <Panel>
-              <h2 className="text-sm font-semibold text-white">Informe final</h2>
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-sm font-semibold text-white">Informe final</h2>
+                <Link href={`/print/tasks/${task.id}`} target="_blank" className="btn-secondary px-2.5 py-1 text-[11px]">
+                  <FileDown className="h-3.5 w-3.5" />
+                  Descargar PDF
+                </Link>
+              </div>
               <div className="mt-3">
                 <Markdown content={task.finalReport} />
               </div>

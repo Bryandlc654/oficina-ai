@@ -1,5 +1,6 @@
 import { completeForAgent } from "../../ai/manager";
 import type { ChatMessage as AIChatMessage } from "../../ai/types";
+import { PM_SLUG, QA_SLUG } from "../../engine/quality";
 import { publishOfficeEvent } from "../../realtime/publish";
 import { cleanReply, extractTaskProposal, taskCreatedMarker, type CreatedTask } from "../chat-format";
 import { db } from "../db";
@@ -79,15 +80,27 @@ export async function postAdminMessage(channel: string, content: string, admin: 
   const responders = dmId
     ? [dmId]
     : mentioned.length > 0
-      ? mentioned.slice(0, MAX_GROUP_REPLIES)
+      ? groupOrder(mentioned, agents).slice(0, MAX_GROUP_REPLIES)
       : await defaultResponder(agents);
 
   // Replies take seconds; the client hears about them over realtime.
-  void replyInTurn(channel, responders, agents, admin).catch((error) => {
+  void replyInTurn(channel, responders, agents, admin, content).catch((error) => {
     console.error("[chat] reply chain failed", error);
   });
 
   return message;
+}
+
+/**
+ * With several people called, the project manager speaks first so the request gets one
+ * coordinated task; quality control reviews every task anyway, so it stays out of the round.
+ */
+export function groupOrder(ids: string[], agents: { id: string; slug: string }[]): string[] {
+  if (ids.length < 2) return ids;
+  const slugOf = (id: string) => agents.find((agent) => agent.id === id)?.slug;
+  const rest = ids.filter((id) => slugOf(id) !== QA_SLUG);
+  const pm = rest.filter((id) => slugOf(id) === PM_SLUG);
+  return [...pm, ...rest.filter((id) => slugOf(id) !== PM_SLUG)];
 }
 
 /** Without mentions, whoever spoke last in the group keeps the conversation going. */
@@ -102,7 +115,13 @@ async function defaultResponder(agents: ChatAgent[]): Promise<string[]> {
 }
 
 // Sequential so each agent sees what the previous ones just said.
-async function replyInTurn(channel: string, agentIds: string[], agents: ChatAgent[], admin: ChatAdmin) {
+async function replyInTurn(
+  channel: string,
+  agentIds: string[],
+  agents: ChatAgent[],
+  admin: ChatAdmin,
+  request: string,
+) {
   // One admin message gets at most one task; whoever speaks first schedules it.
   const chain: { task: CreatedTask | null } = { task: null };
   for (const agentId of agentIds) {
@@ -150,7 +169,7 @@ async function replyInTurn(channel: string, agentIds: string[], agents: ChatAgen
           taskId: null,
           system,
           messages,
-          maxOutputTokens: 500,
+          maxOutputTokens: 700,
           temperature,
         });
         const cleaned = cleanReply(result.text);
@@ -159,7 +178,7 @@ async function replyInTurn(channel: string, agentIds: string[], agents: ChatAgen
       }
 
       text = text.replace(new RegExp(`^\\**${escapeRegExp(agent.name)}\\**:\\s*`, "i"), "");
-      text = await scheduleProposedTask(text, agent.id, agents, admin.id, chain);
+      text = await scheduleProposedTask(text, agent.id, agents, admin, request, chain);
       await db.chatMessage.create({
         data: { channel, authorType: "AGENT", agentId: agent.id, content: text || "…" },
       });
@@ -184,7 +203,8 @@ async function scheduleProposedTask(
   text: string,
   agentId: string,
   agents: ChatAgent[],
-  adminId: string,
+  admin: ChatAdmin,
+  request: string,
   chain: { task: CreatedTask | null },
 ): Promise<string> {
   const { body, proposal } = extractTaskProposal(text);
@@ -206,9 +226,11 @@ async function scheduleProposedTask(
     const input = taskCreateSchema.parse({
       title: proposal.title,
       objective: proposal.objective,
+      // The agent's summary can narrow the request; the planner and finalizer also see it verbatim.
+      description: `Pedido original de ${admin.name} en el chat: «${request.trim()}»`,
       agentIds: [agentId, ...helpers].slice(0, 10),
     });
-    const task = await createTask(input, adminId);
+    const task = await createTask(input, admin.id);
     chain.task = { id: task.id, title: proposal.title };
     return `${body}\n${taskCreatedMarker(chain.task)}`;
   } catch (error) {
@@ -288,8 +310,10 @@ ${webPages || "Ninguna."}
 ${
   openTask
     ? `- Para este pedido ya está agendada la tarea «${openTask.title}». No crees otra: di en una o dos frases qué parte vas a aportar tú, sin repetir lo que ya dijeron.`
-    : `- Si te piden un trabajo de verdad (cotizaciones, auditorías, estrategias, documentos, campañas…), agéndalo tú mismo: el sistema crea la tarea y el equipo empieza al instante. Di con naturalidad que ya lo agendaste (por ejemplo "Lo agendo ya y lo armo con @designer") y añade al final, en una línea aparte, exactamente:
-[[TAREA: título corto | objetivo detallado: qué entregar, supuestos que tomas y con quién colaboras (@slug)]]`
+    : `- Si te piden un trabajo de verdad (cotizaciones, auditorías, estrategias, documentos, campañas…), agéndalo tú mismo: el sistema crea la tarea y el equipo empieza al instante. La tarea cubre el pedido COMPLETO del administrador (por ejemplo "Cotización PDF de rediseño web"), no solo tu parte: el equipo se reparte el trabajo después. Si piden un PDF, el entregable es el documento completo, que la plataforma exporta a PDF.
+- Para agendarla, escribe como PRIMERA línea de tu respuesta, exactamente:
+[[TAREA: título corto del pedido completo | objetivo detallado: qué documento o resultado se entrega, qué secciones lleva, supuestos que tomas y con quién colaboras (@slug)]]
+Después, en una o dos frases naturales, di que ya lo agendaste (por ejemplo "Lo agendo ya y lo armo con @designer").`
 }
 - No antepongas tu nombre a la respuesta.`;
 }

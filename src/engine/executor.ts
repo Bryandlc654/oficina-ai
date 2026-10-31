@@ -13,6 +13,7 @@ import {
   truncate,
 } from "./context";
 import { deliverableKindForAgent } from "./deliverable-type";
+import { CLIENT_DOCUMENT_CURRENCY } from "./client-document";
 
 const MAX_PROMPT_CHARS = 40_000;
 // Pages read from links in the task, plus pages the agent asks for, per subtask.
@@ -55,6 +56,7 @@ ${disabledList}
 - Eres ${agent.name} (${agent.role}). Trabaja únicamente en la subtarea asignada; no planifiques el trabajo de otros.
 - Responde siempre en español, salvo que la tarea pida explícitamente otro idioma.
 - Entrega el resultado completo y autónomo en Markdown. No pidas confirmación salvo que falte un dato imprescindible; en ese caso, declara el supuesto y continúa.
+- Si das precios o costos: ${CLIENT_DOCUMENT_CURRENCY}
 
 ## Contrato de entrega (Markdown legible)
 

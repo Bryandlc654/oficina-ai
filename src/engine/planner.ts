@@ -8,9 +8,17 @@ import { retrieveCompanyKnowledge } from "../lib/services/memory-retrieval";
 import { publishOfficeEvent } from "../realtime/publish";
 import { truncate } from "./context";
 import { parsePlan, type Plan } from "./plan";
+import { CLIENT_DOCUMENT_CURRENCY, isClientDocument } from "./client-document";
 import { QA_SLUG } from "./quality";
 
 const PM_SLUG = "project-manager";
+
+function clientDocumentRules(task: { title: string; objective: string; description: string }): string {
+  if (!isClientDocument(`${task.title} ${task.objective} ${task.description}`)) return "";
+  return `
+Esta tarea termina en un documento para el cliente (cotización, propuesta, contrato…) que se descargará en PDF. Las primeras subtareas preparan las piezas con contenido real y cifras concretas (alcance, entregables, cronograma, costos desglosados con totales, condiciones). La ÚLTIMA subtarea redacta el documento COMPLETO y listo para enviar, dirigido al cliente e integrando todas las piezas; no planifiques "bloques para insertar" sueltos. ${CLIENT_DOCUMENT_CURRENCY}
+`;
+}
 
 function buildPlanningPrompt(input: {
   task: { title: string; objective: string; description: string; priority: string };
@@ -42,8 +50,8 @@ Descompón la tarea en entre 2 y 4 subtareas ejecutables (máximo 6 solo si es i
 
 No asignes dos subtareas simultáneas al mismo empleado si una depende de la otra. No incluyas tareas de coordinación: tú ya coordinas y revisarás al final. Un especialista no debe revisar su propio trabajo.
 
-Todos los entregables se producen en Markdown estructurado y legible. No planifiques conversiones a PDF, DOCX, JSON ni archivos binarios; si la tarea los pide, el contenido se entrega en Markdown y se declara la limitación de formato.
-
+Todos los entregables se producen en Markdown estructurado y legible. No planifiques conversiones a PDF, DOCX, JSON ni archivos binarios: la plataforma exporta el entregable final a PDF por sí sola.
+${clientDocumentRules(input.task)}
 Capacidades reales del equipo: solo producen texto, solo pueden leer las páginas web cuyo enlace aparezca en la tarea y no tienen herramientas de métricas (volúmenes de búsqueda, analítica, redes sociales) ni generan imágenes. No planifiques subtareas de "recopilar datos" de herramientas que no existen ni de "diseñar el archivo final"; planifica análisis con estimaciones declaradas, briefs y prompts de imagen, y textos listos para usar. Responde en español.
 
 Devuelve SOLO un objeto JSON válido, sin texto adicional ni bloques Markdown, con esta forma exacta:

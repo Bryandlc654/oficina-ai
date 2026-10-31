@@ -415,10 +415,15 @@ export async function runTask(taskId: string): Promise<void> {
           if (["CANCELLED", "OFFICE_PAUSED", "TASK_PAUSED"].includes(error.code)) throw error;
         }
 
+        // The team's work is done: the director still gets the finished document, just unreviewed.
         const message = errorMessage(error);
+        const finalReport = await composeFinalDeliverable(
+          taskId,
+          `No se pudo completar (${message}). Revisa el documento y usa "Aprobar y completar" o solicita cambios.`,
+        );
         await holdForApproval(taskId, {
-          observations: "La revisión automática no pudo completarse. Los entregables quedan pendientes de decisión del director.",
-          finalReport: `## Revisión pendiente del director\n\nLos entregables de la tarea están completos, pero Control de calidad no pudo completar la revisión automática.\n\nMotivo: ${message}\n\nRevisa los entregables y usa "Aprobar y completar" o solicita cambios.`,
+          observations: "La revisión automática no pudo completarse. El entregable queda pendiente de decisión del director.",
+          finalReport,
         });
         return;
       }
