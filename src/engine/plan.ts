@@ -24,7 +24,7 @@ const subtaskSchema = z.object({
 export const planSchema = z
   .object({
     summary: z.string().trim().min(10).max(2000),
-    subtasks: z.array(subtaskSchema).min(2).max(8),
+    subtasks: z.array(subtaskSchema).min(2).max(6),
   })
   .superRefine((plan, ctx) => {
     plan.subtasks.forEach((subtask, index) => {
@@ -52,8 +52,20 @@ export const planSchema = z
 export type Plan = z.infer<typeof planSchema>;
 export type PlanSubtask = Plan["subtasks"][number];
 
+const criterionScore = z.coerce.number().min(0).max(10);
+
+/** QA verdict. Approval is decided in code from the score, not by the model. */
 export const reviewSchema = z.object({
-  approved: z.boolean(),
+  score: z.coerce.number().min(0).max(10),
+  criteria: z
+    .object({
+      objective: criterionScore,
+      accuracy: criterionScore,
+      usefulness: criterionScore,
+      clarity: criterionScore,
+    })
+    .partial()
+    .default({}),
   observations: z.string().trim().max(4000).default(""),
   corrections: z
     .array(
@@ -64,7 +76,6 @@ export const reviewSchema = z.object({
     )
     .max(8)
     .default([]),
-  finalReport: z.string().trim().min(10).max(30000),
 });
 
 export type Review = z.infer<typeof reviewSchema>;

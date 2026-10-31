@@ -370,7 +370,7 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
             ) : (
               <ul className="divide-y divide-white/5">
                 {conversation.map((message) => {
-                  const metadata = message.metadata as { kind?: string; round?: number; approved?: boolean } | null;
+                  const metadata = message.metadata as { kind?: string; round?: number; approved?: boolean; passed?: boolean; score?: number } | null;
                   return (
                     <li key={message.id} className="px-5 py-3.5">
                       <div className="flex flex-wrap items-center gap-2">
@@ -378,9 +378,10 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
                           {metadata?.kind === "correction" ? "Corrección" : "Revisión"}
                         </span>
                         {metadata?.round ? <span className="text-[10px] text-zinc-600">ronda {metadata.round}</span> : null}
-                        {typeof metadata?.approved === "boolean" ? (
-                          <span className={metadata.approved ? "text-[10px] text-emerald-300" : "text-[10px] text-amber-300"}>
-                            {metadata.approved ? "aprobado" : "con observaciones"}
+                        {typeof (metadata?.passed ?? metadata?.approved) === "boolean" ? (
+                          <span className={(metadata?.passed ?? metadata?.approved) ? "text-[10px] text-emerald-300" : "text-[10px] text-amber-300"}>
+                            {typeof metadata?.score === "number" ? `${metadata.score}/10 · ` : ""}
+                            {(metadata?.passed ?? metadata?.approved) ? "aprobado" : "con observaciones"}
                           </span>
                         ) : null}
                         <span className="ml-auto text-[10px] text-zinc-600">{timeAgo(message.createdAt)}</span>

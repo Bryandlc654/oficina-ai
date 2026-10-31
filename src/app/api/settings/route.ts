@@ -1,6 +1,6 @@
 import { jsonOk, readJson, route } from "@/lib/api";
 import { requireApiSession } from "@/lib/auth/session";
-import { getOfficeSettings, setOfficePaused } from "@/lib/services/organization";
+import { getOfficeSettings, setOfficePaused, updateQualitySettings } from "@/lib/services/organization";
 import { pauseTaskQueue, resumeTaskQueue } from "@/queue/queue";
 import { publishOfficeEvent } from "@/realtime/publish";
 import { settingsUpdateSchema } from "@/lib/validation";
@@ -36,6 +36,11 @@ export async function POST(request: Request): Promise<Response> {
         message: input.officePaused ? "Ejecuciones de la oficina pausadas" : "Oficina reanudada",
       });
     }
+
+    await updateQualitySettings(
+      { maxTaskTokens: input.maxTaskTokens, qualityMinScore: input.qualityMinScore, autoApprove: input.autoApprove },
+      session.id,
+    );
 
     return jsonOk({ settings: await getOfficeSettings() });
   });

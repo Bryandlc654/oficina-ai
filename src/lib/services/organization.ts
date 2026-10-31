@@ -82,25 +82,74 @@ export async function createProject(input: ProjectCreateInput, actorId: string) 
 
 export type OfficeSettings = {
   officePaused: boolean;
+  /** 0 means no limit. */
   maxTaskTokens: number;
   maxIterations: number;
+  /** Minimum quality-control score (0-10) for work to be delivered. */
+  qualityMinScore: number;
+  /** Deliver approved work without waiting for the director. */
+  autoApprove: boolean;
 };
 
 export const OFFICE_PAUSED_KEY = "office.paused";
 
+const SETTING_KEYS = {
+  maxTaskTokens: "office.maxTaskTokens",
+  maxIterations: "office.maxIterations",
+  qualityMinScore: "office.qualityMinScore",
+  autoApprove: "office.autoApprove",
+} as const;
+
 export async function getOfficeSettings(): Promise<OfficeSettings> {
   const rows = await db.setting.findMany({
-    where: { key: { in: [OFFICE_PAUSED_KEY, "office.maxTaskTokens", "office.maxIterations"] } },
+    where: { key: { in: [OFFICE_PAUSED_KEY, ...Object.values(SETTING_KEYS)] } },
   });
 
   const map = new Map(rows.map((row) => [row.key, row.value]));
-  const paused = map.get(OFFICE_PAUSED_KEY);
+  const number = (key: string, fallback: number) => {
+    const value = map.get(key);
+    return typeof value === "number" ? value : fallback;
+  };
 
   return {
-    officePaused: paused === true,
-    maxTaskTokens: typeof map.get("office.maxTaskTokens") === "number" ? (map.get("office.maxTaskTokens") as number) : 200_000,
-    maxIterations: typeof map.get("office.maxIterations") === "number" ? (map.get("office.maxIterations") as number) : 5,
+    officePaused: map.get(OFFICE_PAUSED_KEY) === true,
+    maxTaskTokens: number(SETTING_KEYS.maxTaskTokens, 0),
+    maxIterations: number(SETTING_KEYS.maxIterations, 5),
+    qualityMinScore: number(SETTING_KEYS.qualityMinScore, 7),
+    autoApprove: map.get(SETTING_KEYS.autoApprove) !== false,
   };
+}
+
+export type QualitySettingsInput = Partial<Pick<OfficeSettings, "maxTaskTokens" | "qualityMinScore" | "autoApprove">>;
+
+export async function updateQualitySettings(input: QualitySettingsInput, actorId: string): Promise<void> {
+  const entries = Object.entries(input).filter(([, value]) => value !== undefined) as [
+    keyof QualitySettingsInput,
+    number | boolean,
+  ][];
+  if (entries.length === 0) return;
+
+  await db.$transaction(async (tx) => {
+    for (const [field, value] of entries) {
+      const key = SETTING_KEYS[field];
+      await tx.setting.upsert({
+        where: { key },
+        create: { key, value, updatedById: actorId },
+        update: { value, updatedById: actorId },
+      });
+    }
+
+    await logActivity(
+      {
+        actorType: "ADMIN",
+        actorId,
+        action: "office.settings_updated",
+        entityType: "Setting",
+        metadata: Object.fromEntries(entries),
+      },
+      tx,
+    );
+  });
 }
 
 export async function setOfficePaused(paused: boolean, actorId: string): Promise<void> {

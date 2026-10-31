@@ -121,7 +121,7 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
 /**
  * Central AI entry point. Agents never talk to a provider directly; this layer
  * resolves provider + model, applies quotas, retries transient failures and
- * records real usage. Task token budgets are not enforced.
+ * records real usage. Tasks stop at the office token budget when one is set.
  */
 export async function completeForAgent(input: CompletionInput): Promise<ChatResult> {
   const settings = await getOfficeSettings();
@@ -157,12 +157,18 @@ export async function completeForAgent(input: CompletionInput): Promise<ChatResu
   if (taskId) {
     const task = await db.task.findUnique({
       where: { id: taskId },
-      select: { status: true, pausedAt: true },
+      select: { status: true, pausedAt: true, tokensUsed: true },
     });
 
     if (!task) throw new AIProviderError("La tarea no existe", "NOT_CONFIGURED");
     if (task.status === "CANCELLED") throw new AIProviderError("La tarea fue cancelada", "CANCELLED");
     if (task.pausedAt) throw new AIProviderError("La tarea está pausada", "TASK_PAUSED");
+    if (settings.maxTaskTokens > 0 && task.tokensUsed >= settings.maxTaskTokens) {
+      throw new AIProviderError(
+        `La tarea alcanzó su presupuesto de ${settings.maxTaskTokens.toLocaleString("es")} tokens`,
+        "BUDGET_EXCEEDED",
+      );
+    }
   }
 
   const maxOutputTokens = input.maxOutputTokens;

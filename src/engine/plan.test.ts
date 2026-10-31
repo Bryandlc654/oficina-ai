@@ -79,23 +79,22 @@ describe("planSchema", () => {
 });
 
 describe("reviewSchema", () => {
-  it("accepts a review with corrections", () => {
+  it("accepts a scored review with corrections", () => {
     const review = parseReview(
       JSON.stringify({
-        approved: false,
+        score: "6",
+        criteria: { objective: 7, accuracy: 5 },
         observations: "Falta presupuesto",
         corrections: [{ subtaskOrder: 2, instruction: "Añade un presupuesto estimado por canal" }],
-        finalReport: "Informe preliminar con observaciones",
       }),
     );
-    expect(review.approved).toBe(false);
+    expect(review.score).toBe(6);
+    expect(review.criteria.accuracy).toBe(5);
     expect(review.corrections[0]?.subtaskOrder).toBe(2);
   });
 
-  it("requires a final report", () => {
-    expect(() =>
-      parseReview(JSON.stringify({ approved: true, observations: "", corrections: [], finalReport: "" })),
-    ).toThrow();
+  it("rejects scores out of range", () => {
+    expect(() => parseReview(JSON.stringify({ score: 14, observations: "", corrections: [] }))).toThrow();
   });
 });
 

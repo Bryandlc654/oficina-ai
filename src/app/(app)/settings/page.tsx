@@ -4,6 +4,7 @@ import { getOfficeSettings } from "@/lib/services/organization";
 import { PageHeader, Panel } from "@/components/ui";
 import { formatDateTime } from "@/lib/format";
 import { CheckCircle2, CircleAlert } from "lucide-react";
+import { QualitySettings } from "./quality-settings";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Configuración" };
@@ -90,6 +91,20 @@ export default async function SettingsPage() {
           <p className="mt-3 text-[11px] leading-relaxed text-zinc-600">
             Usa el botón de pausa en la barra superior para detener todas las ejecuciones de la oficina.
           </p>
+        </Panel>
+
+        <Panel>
+          <h2 className="text-sm font-semibold text-white">Calidad y consumo</h2>
+          <p className="mt-1 text-xs text-zinc-500">
+            Control de calidad revisa y puntúa cada tarea antes de entregártela en un único documento final.
+          </p>
+          <QualitySettings
+            initial={{
+              qualityMinScore: settings.qualityMinScore,
+              autoApprove: settings.autoApprove,
+              maxTaskTokens: settings.maxTaskTokens,
+            }}
+          />
         </Panel>
 
         <Panel>

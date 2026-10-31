@@ -216,8 +216,8 @@ export async function executeSubtask(subtaskId: string): Promise<void> {
   const retrievalQuery = `${subtask.task.title} ${subtask.task.objective} ${subtask.title} ${subtask.objective}`;
 
   const [knowledge, memory, correctionMessages] = await Promise.all([
-    retrieveCompanyKnowledge(retrievalQuery, 5000),
-    retrieveAgentMemories(agent.id, retrievalQuery, 2500),
+    retrieveCompanyKnowledge(retrievalQuery, 3500),
+    retrieveAgentMemories(agent.id, retrievalQuery, 1500),
     db.agentMessage.findMany({
       where: { subtaskId, toAgentId: agent.id, role: "USER" },
       orderBy: { createdAt: "desc" },

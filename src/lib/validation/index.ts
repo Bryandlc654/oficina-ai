@@ -74,6 +74,9 @@ export const projectCreateSchema = z.object({
 
 export const settingsUpdateSchema = z.object({
   officePaused: z.boolean().optional(),
+  maxTaskTokens: z.number().int().min(0).max(5_000_000).optional(),
+  qualityMinScore: z.number().int().min(1).max(10).optional(),
+  autoApprove: z.boolean().optional(),
 });
 
 export const providerUpdateSchema = z.object({

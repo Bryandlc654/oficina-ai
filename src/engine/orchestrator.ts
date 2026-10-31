@@ -4,11 +4,14 @@ import { getEnv } from "../lib/env";
 import { db } from "../lib/db";
 import { AppError } from "../lib/errors";
 import { logActivity } from "../lib/services/activity";
+import { getOfficeSettings } from "../lib/services/organization";
 import { publishOfficeEvent } from "../realtime/publish";
 import { loadTaskSubtasks } from "./context";
 import { executeSubtask } from "./executor";
+import { composeFinalDeliverable } from "./finalizer";
 import { createPlan } from "./planner";
 import { reviewTask } from "./reviewer";
+import { PM_SLUG } from "./quality";
 
 const MAX_CYCLES = 24;
 const MAX_SUBTASK_ATTEMPTS = 2;
@@ -70,7 +73,7 @@ async function resetStaleState(taskId: string): Promise<void> {
       },
     }),
     db.agent.updateMany({
-      where: { id: { in: agentIds } },
+      where: notBusyElsewhere(taskId, agentIds),
       data: { status: AgentStatus.AVAILABLE, currentSubtaskId: null },
     }),
     db.task.update({
@@ -93,9 +96,17 @@ async function resetAgents(taskId: string): Promise<void> {
   if (agentIds.length === 0) return;
 
   await db.agent.updateMany({
-    where: { id: { in: agentIds } },
+    where: notBusyElsewhere(taskId, agentIds),
     data: { status: AgentStatus.AVAILABLE, currentSubtaskId: null },
   });
+}
+
+// An agent can be on several tasks; only free the ones not working on another task right now.
+function notBusyElsewhere(taskId: string, agentIds: string[]) {
+  return {
+    id: { in: agentIds },
+    OR: [{ currentSubtaskId: null }, { currentSubtask: { is: { taskId } } }],
+  };
 }
 
 async function runWithConcurrency<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
@@ -198,7 +209,7 @@ async function executeAllSubtasks(taskId: string): Promise<void> {
 }
 
 async function recordFinalReport(taskId: string, title: string, content: string): Promise<void> {
-  const pm = await db.agent.findUnique({ where: { slug: "project-manager" }, select: { id: true } });
+  const pm = await db.agent.findUnique({ where: { slug: PM_SLUG }, select: { id: true } });
   if (!pm) return;
 
   await db.deliverable.create({
@@ -217,7 +228,7 @@ async function finalizeApproved(taskId: string, finalReport: string): Promise<vo
   if (!task) return;
   if (task.status === TaskStatus.CANCELLED) return;
 
-  const pm = await db.agent.findUnique({ where: { slug: "project-manager" }, select: { id: true } });
+  const pm = await db.agent.findUnique({ where: { slug: PM_SLUG }, select: { id: true } });
 
   await db.$transaction(async (tx) => {
     await tx.task.update({
@@ -236,7 +247,7 @@ async function finalizeApproved(taskId: string, finalReport: string): Promise<vo
         data: {
           taskId,
           agentId: pm.id,
-          title: `Informe final — ${task.title}`.slice(0, 180),
+          title: `Entregable final — ${task.title}`.slice(0, 180),
           type: "REPORT",
           content: finalReport,
         },
@@ -388,12 +399,14 @@ export async function runTask(taskId: string): Promise<void> {
       data: { status: TaskStatus.REVIEW },
     });
 
+    const { qualityMinScore, autoApprove } = await getOfficeSettings();
+
     for (let round = 1; round <= MAX_REVIEW_ROUNDS; round += 1) {
       await assertRunnable(taskId);
 
       let review;
       try {
-        review = await reviewTask(taskId, round);
+        review = await reviewTask(taskId, round, qualityMinScore);
       } catch (error) {
         if (error instanceof AIProviderError) {
           if (["CANCELLED", "OFFICE_PAUSED", "TASK_PAUSED"].includes(error.code)) throw error;
@@ -405,18 +418,27 @@ export async function runTask(taskId: string): Promise<void> {
         const message = errorMessage(error);
         await holdForApproval(taskId, {
           observations: "La revisión automática no pudo completarse. Los entregables quedan pendientes de decisión del director.",
-          finalReport: `## Revisión pendiente del director\n\nLos entregables de la tarea están completos, pero el Project Manager no pudo completar la revisión automática.\n\nMotivo: ${message}\n\nRevisa los entregables y usa "Aprobar y completar" o solicita cambios.`,
+          finalReport: `## Revisión pendiente del director
+
+Los entregables de la tarea están completos, pero Control de calidad no pudo completar la revisión automática.
+
+Motivo: ${message}
+
+Revisa los entregables y usa "Aprobar y completar" o solicita cambios.`,
         });
         return;
       }
 
-      if (review.approved) {
-        await finalizeApproved(taskId, review.finalReport);
-        return;
-      }
-
-      if (review.corrections.length === 0 || round === MAX_REVIEW_ROUNDS) {
-        await holdForApproval(taskId, review);
+      // A second round only happens when the score fell short and there is something to fix.
+      const lastChance = round === MAX_REVIEW_ROUNDS || review.corrections.length === 0;
+      if (review.passed || lastChance) {
+        await assertRunnable(taskId);
+        const finalReport = await composeFinalDeliverable(taskId, review);
+        if (review.passed && autoApprove) {
+          await finalizeApproved(taskId, finalReport);
+        } else {
+          await holdForApproval(taskId, { observations: review.observations, finalReport });
+        }
         return;
       }
 

@@ -8,7 +8,7 @@ import { KnowledgeManager } from "./knowledge-manager";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Memoria" };
 
-type MessageMetadata = { kind?: string; round?: number; approved?: boolean };
+type MessageMetadata = { kind?: string; round?: number; approved?: boolean; passed?: boolean; score?: number };
 
 export default async function MemoryPage() {
   const [knowledge, agents, memories, messages] = await Promise.all([
@@ -160,16 +160,17 @@ export default async function MemoryPage() {
                 <li key={message.id} className="px-5 py-4">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="chip border-white/10 bg-white/[0.04] text-[10px] text-zinc-400">
-                      {metadata?.kind === "correction" ? "Corrección" : "Revisión del PM"}
+                      {metadata?.kind === "correction" ? "Corrección" : "Revisión de calidad"}
                     </span>
                     {metadata?.round ? (
                       <span className="text-[10px] text-zinc-600">ronda {metadata.round}</span>
                     ) : null}
-                    {typeof metadata?.approved === "boolean" ? (
-                      <span className={metadata.approved ? "text-[10px] text-emerald-300" : "text-[10px] text-amber-300"}>
-                        {metadata.approved ? "aprobado" : "con observaciones"}
-                      </span>
-                    ) : null}
+                    {typeof (metadata?.passed ?? metadata?.approved) === "boolean" ? (
+                          <span className={(metadata?.passed ?? metadata?.approved) ? "text-[10px] text-emerald-300" : "text-[10px] text-amber-300"}>
+                            {typeof metadata?.score === "number" ? `${metadata.score}/10 · ` : ""}
+                            {(metadata?.passed ?? metadata?.approved) ? "aprobado" : "con observaciones"}
+                          </span>
+                        ) : null}
                     <Link href={`/tasks/${message.task.id}`} className="ml-auto text-[11px] text-emerald-400 hover:text-emerald-300">
                       {truncateLabel(message.task.title, 60)}
                     </Link>

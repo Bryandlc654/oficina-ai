@@ -62,6 +62,15 @@ async function processor(job: Job<TaskJobData>, token?: string): Promise<void> {
       (error instanceof AppError && error.code === "TASK_PAUSED");
 
     if (taskPaused) {
+      // Resumed while this job was still winding down: the resume's enqueue was ignored
+      // because this job id was active, so this job has to pick the task back up.
+      const latest = await db.task.findUnique({ where: { id: taskId }, select: { status: true, pausedAt: true } });
+      if (latest && !latest.pausedAt && latest.status !== "CANCELLED" && latest.status !== "COMPLETED") {
+        await setJobStatus(taskId, "PENDING", "Tarea reanudada");
+        await job.moveToDelayed(Date.now() + 1_000, token);
+        throw new DelayedError();
+      }
+
       await setJobStatus(taskId, "PENDING", "Tarea pausada por el administrador");
       console.log(`[worker] task ${taskId} paused`);
       return;

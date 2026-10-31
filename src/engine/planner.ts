@@ -8,6 +8,7 @@ import { retrieveCompanyKnowledge } from "../lib/services/memory-retrieval";
 import { publishOfficeEvent } from "../realtime/publish";
 import { truncate } from "./context";
 import { parsePlan, type Plan } from "./plan";
+import { QA_SLUG } from "./quality";
 
 const PM_SLUG = "project-manager";
 
@@ -37,7 +38,7 @@ ${agentList || "No hay empleados disponibles"}
 
 ## Instrucciones
 
-Descompón la tarea en entre 2 y 8 subtareas ejecutables. Cada subtarea debe tener un único responsable, un entregable concreto y dependencias explícitas por número de orden (1-based). Las dependencias solo pueden apuntar a subtareas anteriores; no puede haber ciclos. Las subtareas independientes se ejecutarán en paralelo, así que no inventes dependencias innecesarias.
+Descompón la tarea en entre 2 y 4 subtareas ejecutables (máximo 6 solo si es imprescindible): cada subtarea extra cuesta tokens, así que agrupa el trabajo relacionado en una sola. Cada subtarea debe tener un único responsable, un entregable concreto y dependencias explícitas por número de orden (1-based). Las dependencias solo pueden apuntar a subtareas anteriores; no puede haber ciclos. Las subtareas independientes se ejecutarán en paralelo, así que no inventes dependencias innecesarias.
 
 No asignes dos subtareas simultáneas al mismo empleado si una depende de la otra. No incluyas tareas de coordinación: tú ya coordinas y revisarás al final. Un especialista no debe revisar su propio trabajo.
 
@@ -80,7 +81,8 @@ export async function createPlan(taskId: string): Promise<number> {
   }
 
   const agents = await db.agent.findMany({
-    where: { status: { not: AgentStatus.OFFLINE } },
+    // Quality control reviews the work; it never takes subtasks.
+    where: { status: { not: AgentStatus.OFFLINE }, slug: { not: QA_SLUG } },
     select: {
       id: true,
       slug: true,
@@ -159,7 +161,7 @@ export async function createPlan(taskId: string): Promise<number> {
     } catch {
       const repairPrompt = `La respuesta anterior no es JSON válido. Corrige el error y devuelve SOLO el objeto JSON, sin markdown ni explicaciones.
 
-Debe tener "summary" y entre 2 y 8 "subtasks". Cada subtarea necesita title, objective, description, expectedDeliverable, agentSlug, dependsOn (números de orden anteriores) y deliverableType.
+Debe tener "summary" y entre 2 y 6 "subtasks". Cada subtarea necesita title, objective, description, expectedDeliverable, agentSlug, dependsOn (números de orden anteriores) y deliverableType.
 
 Respuesta inválida a reparar:
 ${result.text.slice(0, 12000)}`;
