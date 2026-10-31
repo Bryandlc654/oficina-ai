@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cleanReply, extractTaskProposal } from "./chat-format";
+import { cleanReply, extractTaskProposal, taskCreatedMarker } from "./chat-format";
 
 describe("cleanReply", () => {
   it("keeps normal replies", () => {
@@ -30,5 +30,14 @@ describe("extractTaskProposal", () => {
 
   it("ignores messages without a proposal", () => {
     expect(extractTaskProposal("Hola").proposal).toBeNull();
+  });
+
+  it("reads back a task the server already created", () => {
+    const marker = taskCreatedMarker({ id: "task_1", title: "PDF | cotización [web]" });
+    const { body, proposal, created } = extractTaskProposal(`Listo, ya lo agendé.
+${marker}`);
+    expect(body).toBe("Listo, ya lo agendé.");
+    expect(proposal).toBeNull();
+    expect(created).toEqual({ id: "task_1", title: "PDF   cotización  web" });
   });
 });

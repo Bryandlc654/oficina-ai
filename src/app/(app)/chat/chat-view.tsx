@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ArrowUpRight, Hash, ListTodo, Send } from "lucide-react";
 import { Markdown } from "@/components/markdown";
 import { useOfficeEvents, type OfficeEvent } from "@/components/realtime/realtime-provider";
-import { extractTaskProposal, type TaskProposal } from "@/lib/chat-format";
+import { extractTaskProposal, type CreatedTask, type TaskProposal } from "@/lib/chat-format";
 import { AGENT_STATUS_DOT, AGENT_STATUS_LABELS } from "@/lib/constants";
 import { cn, initials, timeAgo } from "@/lib/format";
 
@@ -227,7 +227,7 @@ export function ChatView({ agents, initialMessages }: { agents: ChatAgent[]; ini
           ) : null}
 
           {messages.map((message) => {
-            const { body, proposal } = extractTaskProposal(message.content);
+            const { body, proposal, created } = extractTaskProposal(message.content);
             return message.authorType === "ADMIN" ? (
               <div key={message.id} className="flex justify-end">
                 <div className="max-w-[80%] rounded-2xl rounded-br-md bg-emerald-500/15 px-3.5 py-2 text-[13px] leading-relaxed text-emerald-50">
@@ -251,6 +251,7 @@ export function ChatView({ agents, initialMessages }: { agents: ChatAgent[]; ini
                   <div className="rounded-2xl rounded-tl-md bg-white/[0.04] px-3.5 py-2">
                     <Markdown content={body} className="[&_p:last-child]:mb-0 [&_p]:text-zinc-300" />
                   </div>
+                  {created ? <ScheduledTaskCard task={created} /> : null}
                   {proposal && message.agentId ? (
                     <TaskProposalCard proposal={proposal} agentId={message.agentId} />
                   ) : null}
@@ -315,6 +316,22 @@ export function ChatView({ agents, initialMessages }: { agents: ChatAgent[]; ini
         </footer>
       </section>
     </div>
+  );
+}
+
+function ScheduledTaskCard({ task }: { task: CreatedTask }) {
+  return (
+    <Link
+      href={`/tasks/${task.id}`}
+      className="mt-2 flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/[0.05] px-3 py-2 text-xs text-zinc-200 hover:bg-emerald-500/[0.09]"
+    >
+      <ListTodo className="h-3.5 w-3.5 shrink-0 text-emerald-300" />
+      <span className="min-w-0 flex-1 truncate">
+        <span className="text-emerald-300/80">Tarea agendada · </span>
+        {task.title}
+      </span>
+      <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-emerald-300" />
+    </Link>
   );
 }
 

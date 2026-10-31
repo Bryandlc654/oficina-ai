@@ -1,6 +1,8 @@
 // Shared by the chat service (cleaning model output) and the chat UI (task cards).
 
 const TASK_PROPOSAL = /\[\[TAREA:\s*([^|\]]+?)\s*\|\s*([^\]]+?)\s*\]\]/;
+// What the server leaves in place of a proposal once it has created the task itself.
+const TASK_CREATED = /\[\[TAREA_CREADA:\s*([^|\]]+?)\s*\|\s*([^\]]+?)\s*\]\]/;
 
 // A short chunk repeated many times in a row: the model got stuck in a loop.
 const REPETITION = /(.{1,30}?)\1{5,}/gsu;
@@ -26,13 +28,30 @@ export function cleanReply(raw: string): CleanedReply {
 }
 
 export type TaskProposal = { title: string; objective: string };
+export type CreatedTask = { id: string; title: string };
 
-export function extractTaskProposal(content: string): { body: string; proposal: TaskProposal | null } {
+export function extractTaskProposal(content: string): {
+  body: string;
+  proposal: TaskProposal | null;
+  created: CreatedTask | null;
+} {
+  const done = TASK_CREATED.exec(content);
+  if (done) {
+    return {
+      body: content.replace(done[0], "").trim(),
+      proposal: null,
+      created: { id: (done[1] ?? "").trim(), title: (done[2] ?? "").trim() },
+    };
+  }
   const match = TASK_PROPOSAL.exec(content);
-  if (!match) return { body: content, proposal: null };
+  if (!match) return { body: content, proposal: null, created: null };
   const title = (match[1] ?? "").trim().slice(0, 190);
   const objective = (match[2] ?? "").trim().slice(0, 5000);
   const body = content.replace(match[0], "").trim();
-  if (title.length < 3 || objective.length < 10) return { body, proposal: null };
-  return { body, proposal: { title, objective } };
+  if (title.length < 3 || objective.length < 10) return { body, proposal: null, created: null };
+  return { body, proposal: { title, objective }, created: null };
+}
+
+export function taskCreatedMarker(task: CreatedTask): string {
+  return `[[TAREA_CREADA: ${task.id} | ${task.title.replace(/[|\[\]]/g, " ")}]]`;
 }

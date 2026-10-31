@@ -15,7 +15,7 @@ export async function POST(request: Request): Promise<Response> {
   return route(async () => {
     const session = await requireApiSession();
     const input = chatMessageCreateSchema.parse(await readJson(request));
-    const message = await postAdminMessage(input.channel, input.content, session.name);
+    const message = await postAdminMessage(input.channel, input.content, { id: session.id, name: session.name });
     return jsonOk({ message }, 201);
   });
 }

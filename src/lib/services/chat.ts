@@ -1,11 +1,13 @@
 import { completeForAgent } from "../../ai/manager";
 import type { ChatMessage as AIChatMessage } from "../../ai/types";
 import { publishOfficeEvent } from "../../realtime/publish";
-import { cleanReply } from "../chat-format";
+import { cleanReply, extractTaskProposal, taskCreatedMarker, type CreatedTask } from "../chat-format";
 import { db } from "../db";
 import { NotFoundError } from "../errors";
+import { taskCreateSchema } from "../validation";
 import { extractUrls, formatWebPages, readWebPages } from "../web-reader";
 import { retrieveAgentMemories, retrieveCompanyKnowledge } from "./memory-retrieval";
+import { createTask } from "./tasks";
 
 export const GROUP_CHANNEL = "group";
 const HISTORY_LIMIT = 24;
@@ -50,14 +52,18 @@ export async function listChannelMessages(channel: string) {
 
 /** Agent ids mentioned as @slug; @todos mentions everyone. */
 export function parseMentions(content: string, agents: { id: string; slug: string }[]): string[] {
+  // Models like typographic hyphens (@control‑calidad); slugs use plain ones.
+  const normalized = content.replace(/[\u2010-\u2015]/g, "-");
   const tokens = new Set(
-    Array.from(content.matchAll(/@([\p{L}\p{N}_-]+)/gu), (match) => (match[1] ?? "").toLowerCase()),
+    Array.from(normalized.matchAll(/@([\p{L}\p{N}_-]+)/gu), (match) => (match[1] ?? "").toLowerCase()),
   );
   if (tokens.has(EVERYONE)) return agents.map((agent) => agent.id);
   return agents.filter((agent) => tokens.has(agent.slug.toLowerCase())).map((agent) => agent.id);
 }
 
-export async function postAdminMessage(channel: string, content: string, adminName: string) {
+type ChatAdmin = { id: string; name: string };
+
+export async function postAdminMessage(channel: string, content: string, admin: ChatAdmin) {
   const agents = await listChatAgents();
   const dmId = dmAgentId(channel);
   if (channel !== GROUP_CHANNEL && !(dmId && agents.some((agent) => agent.id === dmId))) {
@@ -77,7 +83,7 @@ export async function postAdminMessage(channel: string, content: string, adminNa
       : await defaultResponder(agents);
 
   // Replies take seconds; the client hears about them over realtime.
-  void replyInTurn(channel, responders, agents, adminName).catch((error) => {
+  void replyInTurn(channel, responders, agents, admin).catch((error) => {
     console.error("[chat] reply chain failed", error);
   });
 
@@ -96,7 +102,9 @@ async function defaultResponder(agents: ChatAgent[]): Promise<string[]> {
 }
 
 // Sequential so each agent sees what the previous ones just said.
-async function replyInTurn(channel: string, agentIds: string[], agents: ChatAgent[], adminName: string) {
+async function replyInTurn(channel: string, agentIds: string[], agents: ChatAgent[], admin: ChatAdmin) {
+  // One admin message gets at most one task; whoever speaks first schedules it.
+  const chain: { task: CreatedTask | null } = { task: null };
   for (const agentId of agentIds) {
     const agent = await db.agent.findUnique({
       where: { id: agentId },
@@ -120,7 +128,7 @@ async function replyInTurn(channel: string, agentIds: string[], agents: ChatAgen
         include: { agent: { select: { name: true } } },
       });
 
-      const messages = toConversation(history.reverse(), agent.id, adminName);
+      const messages = toConversation(history.reverse(), agent.id, admin.name);
       if (messages.length === 0) continue;
 
       // Recent turns decide what the agent should recall about the company.
@@ -131,7 +139,7 @@ async function replyInTurn(channel: string, agentIds: string[], agents: ChatAgen
         retrieveAgentMemories(agent.id, query, 1500),
         readWebPages(sharedUrls),
       ]);
-      const system = chatSystemPrompt(agent, channel, agents, knowledge, memories, formatWebPages(pages));
+      const system = chatSystemPrompt(agent, channel, agents, knowledge, memories, formatWebPages(pages), chain.task);
 
       // Small free models sometimes loop or switch language; one cooler retry usually fixes it.
       let text = "";
@@ -151,6 +159,7 @@ async function replyInTurn(channel: string, agentIds: string[], agents: ChatAgen
       }
 
       text = text.replace(new RegExp(`^\\**${escapeRegExp(agent.name)}\\**:\\s*`, "i"), "");
+      text = await scheduleProposedTask(text, agent.id, agents, admin.id, chain);
       await db.chatMessage.create({
         data: { channel, authorType: "AGENT", agentId: agent.id, content: text || "…" },
       });
@@ -170,6 +179,45 @@ async function replyInTurn(channel: string, agentIds: string[], agents: ChatAgen
   }
 }
 
+/** Turns a [[TAREA: …]] line into a real, running task so the team organizes itself. */
+async function scheduleProposedTask(
+  text: string,
+  agentId: string,
+  agents: ChatAgent[],
+  adminId: string,
+  chain: { task: CreatedTask | null },
+): Promise<string> {
+  const { body, proposal } = extractTaskProposal(text);
+  if (!proposal) return text;
+
+  if (chain.task) {
+    await db.taskAssignment.createMany({
+      data: [{ taskId: chain.task.id, agentId, role: "CONTRIBUTOR" }],
+      skipDuplicates: true,
+    });
+    return `${body}\n${taskCreatedMarker(chain.task)}`;
+  }
+
+  // Teammates the agent named become contributors; "@todos" is not a team choice.
+  const helpers = parseMentions(`${body}\n${proposal.objective}`.replace(/@todos\b/gi, ""), agents).filter(
+    (id) => id !== agentId,
+  );
+  try {
+    const input = taskCreateSchema.parse({
+      title: proposal.title,
+      objective: proposal.objective,
+      agentIds: [agentId, ...helpers].slice(0, 10),
+    });
+    const task = await createTask(input, adminId);
+    chain.task = { id: task.id, title: proposal.title };
+    return `${body}\n${taskCreatedMarker(chain.task)}`;
+  } catch (error) {
+    // The proposal card stays, so the admin can still create it by hand.
+    console.error("[chat] could not schedule proposed task", error);
+    return text;
+  }
+}
+
 function toConversation(
   rows: { authorType: string; agentId: string | null; content: string; agent: { name: string } | null }[],
   selfId: string,
@@ -180,7 +228,8 @@ function toConversation(
     const mine = row.authorType === "AGENT" && row.agentId === selfId;
     const role = mine ? "assistant" : "user";
     const author = row.authorType === "ADMIN" ? `${adminName} (administrador)` : (row.agent?.name ?? "Compañero");
-    const content = mine ? row.content : `${author}: ${row.content}`;
+    const readable = readableMarkers(row.content);
+    const content = mine ? readable : `${author}: ${readable}`;
     const previous = messages[messages.length - 1];
     // Providers want alternating turns, so consecutive turns of one side are merged.
     if (previous && previous.role === role) previous.content += `\n\n${content}`;
@@ -191,6 +240,12 @@ function toConversation(
   return messages;
 }
 
+// Agents should see "task scheduled", not the raw marker they might then copy.
+function readableMarkers(content: string): string {
+  const { body, created } = extractTaskProposal(content);
+  return created ? `${body}\n(Tarea agendada: «${created.title}»)` : content;
+}
+
 function chatSystemPrompt(
   agent: { name: string; role: string; personality: string; responsibilities: string; department: { name: string } },
   channel: string,
@@ -198,12 +253,13 @@ function chatSystemPrompt(
   knowledge: string,
   memories: string,
   webPages: string,
+  openTask: CreatedTask | null,
 ): string {
   const setting =
     channel === GROUP_CHANNEL
       ? `Estás en el chat grupal de la oficina con el administrador y tus compañeros:\n${agents
           .map((other) => `- ${other.name} (@${other.slug}): ${other.role}`)
-          .join("\n")}\nSi otra persona del equipo encaja mejor, menciónala con @slug.`
+          .join("\n")}\nPara sumar a alguien, menciónalo con @slug.`
       : "Estás en una conversación privada 1 a 1 con el administrador.";
 
   // Deliberately not the agent's task systemPrompt: that one asks for full formal deliverables.
@@ -226,9 +282,15 @@ ${webPages || "Ninguna."}
 - Es un chat de trabajo, no un informe: responde en español, en primera persona y con naturalidad, en 2 a 6 frases (máximo unas 120 palabras).
 - Nada de títulos, secciones numeradas ni planes completos. Como mucho, una lista corta de 3 puntos.
 - Solo puedes leer las páginas cuyo enlace te compartan (su contenido aparece arriba); no tienes buscador ni acceso a cuentas privadas o métricas de redes sociales. Si te piden revisar una web sin enlace, pide el enlace. Nunca inventes datos de la empresa, cifras, clientes ni resultados: usa solo lo que sabes arriba o lo que diga el administrador.
-- Si falta información para ayudar bien, haz 1 o 2 preguntas concretas.
-- Si te piden un trabajo de verdad (auditorías, estrategias, documentos, campañas…), da una primera idea breve y propón convertirlo en tarea añadiendo al final, en una línea aparte, exactamente:
-[[TAREA: título corto | objetivo detallado con todo el contexto que se conoce]]
+- Trabajas con autonomía, como un profesional con experiencia: no pidas permiso ni esperes a tener todos los datos. Si falta algo, asume lo más razonable para una agencia como la nuestra y dilo en una frase ("asumo 5 páginas y WordPress").
+- Solo pregunta si sin ese dato el trabajo no serviría, y como máximo una pregunta. Aun así, sigue adelante con tus supuestos.
+- No le devuelvas el trabajo al administrador ni lo pases a otros sin aportar: di qué haces tú.
+${
+  openTask
+    ? `- Para este pedido ya está agendada la tarea «${openTask.title}». No crees otra: di en una o dos frases qué parte vas a aportar tú, sin repetir lo que ya dijeron.`
+    : `- Si te piden un trabajo de verdad (cotizaciones, auditorías, estrategias, documentos, campañas…), agéndalo tú mismo: el sistema crea la tarea y el equipo empieza al instante. Di con naturalidad que ya lo agendaste (por ejemplo "Lo agendo ya y lo armo con @designer") y añade al final, en una línea aparte, exactamente:
+[[TAREA: título corto | objetivo detallado: qué entregar, supuestos que tomas y con quién colaboras (@slug)]]`
+}
 - No antepongas tu nombre a la respuesta.`;
 }
 
