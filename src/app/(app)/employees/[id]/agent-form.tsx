@@ -21,6 +21,7 @@ type AgentDraft = {
   systemPrompt: string;
   model: string;
   fallbackModel: string | null;
+  autoModel: boolean;
   maxIterations: number;
   dailyTokenLimit: number | null;
   status: AgentStatusValue;
@@ -29,6 +30,8 @@ type AgentDraft = {
   fallbackProviderId: string | null;
   tools: ToolDraft[];
 };
+
+type RankedModel = { providerName: string; model: string; score: number; coolingDown: boolean };
 
 type ProviderOption = {
   id: string;
@@ -58,10 +61,12 @@ export function AgentForm({
   agent,
   departments,
   providers,
+  autoRanking,
 }: {
   agent: AgentDraft;
   departments: { id: string; name: string }[];
   providers: ProviderOption[];
+  autoRanking: RankedModel[];
 }) {
   const router = useRouter();
   const [form, setForm] = useState<AgentDraft>(agent);
@@ -109,6 +114,7 @@ export function AgentForm({
           systemPrompt: form.systemPrompt,
           model: form.model,
           fallbackModel: form.fallbackModel || null,
+          autoModel: form.autoModel,
           maxIterations: form.maxIterations,
           dailyTokenLimit: form.dailyTokenLimit,
           status: form.status,
@@ -259,6 +265,40 @@ export function AgentForm({
 
       <section className="panel p-5">
         <h2 className="text-sm font-semibold text-white">Modelo y límites</h2>
+
+        <label className="mt-4 flex items-start gap-3 rounded-lg border border-white/6 bg-black/20 px-3 py-2.5">
+          <input
+            type="checkbox"
+            checked={form.autoModel}
+            onChange={(event) => update("autoModel", event.target.checked)}
+            className="mt-0.5 accent-emerald-400"
+          />
+          <span>
+            <span className="block text-xs text-zinc-300">Elegir el modelo automáticamente (recomendado)</span>
+            <span className="block text-[11px] text-zinc-600">
+              Usa el mejor modelo configurado y, si se queda sin cupo o falla, pasa al siguiente de la lista.
+            </span>
+          </span>
+        </label>
+
+        {form.autoModel ? (
+          <ol className="mt-3 space-y-1">
+            {autoRanking.length === 0 ? (
+              <li className="text-[11px] text-rose-300">No hay modelos configurados. Añade una clave en Inteligencia artificial.</li>
+            ) : (
+              autoRanking.map((entry, index) => (
+                <li key={`${entry.providerName}-${entry.model}`} className="flex items-center gap-2 text-[11px]">
+                  <span className="w-4 text-right text-zinc-600">{index + 1}.</span>
+                  <span className="font-mono text-zinc-300">{entry.model}</span>
+                  <span className="text-zinc-600">· {entry.providerName}</span>
+                  {entry.coolingDown ? <span className="text-amber-300">en pausa por límite</span> : null}
+                  <span className="ml-auto text-zinc-600">{entry.score}</span>
+                </li>
+              ))
+            )}
+          </ol>
+        ) : null}
+
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
           <div>
             <label htmlFor="agent-provider" className="label">
@@ -268,6 +308,7 @@ export function AgentForm({
               id="agent-provider"
               className="input"
               value={form.providerId ?? ""}
+              disabled={form.autoModel}
               onChange={(event) => update("providerId", event.target.value || null)}
             >
               <option value="">Sin asignar</option>
@@ -294,6 +335,7 @@ export function AgentForm({
               id="agent-fallback-provider"
               className="input"
               value={form.fallbackProviderId ?? ""}
+              disabled={form.autoModel}
               onChange={(event) => update("fallbackProviderId", event.target.value || null)}
             >
               <option value="">Sin asignar</option>
@@ -313,6 +355,7 @@ export function AgentForm({
               id="agent-model"
               className="input font-mono text-xs"
               value={form.model}
+              disabled={form.autoModel}
               onChange={(event) => update("model", event.target.value)}
               required
             />
@@ -328,6 +371,7 @@ export function AgentForm({
               id="agent-fallback"
               className="input font-mono text-xs"
               value={form.fallbackModel ?? ""}
+              disabled={form.autoModel}
               onChange={(event) => update("fallbackModel", event.target.value || null)}
               placeholder="opcional"
             />

@@ -24,6 +24,18 @@ type GeminiResponse = {
   error?: { message?: string };
 };
 
+/**
+ * Gemini 2.5+ models think before answering. Pro cannot turn it off (minimum 128),
+ * Flash can; both get a small fixed budget so cost stays predictable.
+ */
+export function geminiThinkingBudget(model: string): number | undefined {
+  const match = /gemini-(\d+(?:\.\d+)?)/.exec(model);
+  if (!match || Number(match[1]) < 2.5) return undefined;
+  if (/-pro/.test(model)) return 1024;
+  if (/flash-lite/.test(model)) return 0;
+  return 512;
+}
+
 export async function callGemini(provider: ProviderConfig, request: Parameters<AIAdapter>[1]): Promise<ChatResult> {
   if (!provider.apiKey) {
     throw new AIProviderError("Google Gemini no tiene clave de API configurada", "NOT_CONFIGURED", {
@@ -34,6 +46,7 @@ export async function callGemini(provider: ProviderConfig, request: Parameters<A
   const baseUrl = (provider.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
   const url = `${baseUrl}/models/${encodeURIComponent(request.model)}:generateContent?key=${encodeURIComponent(provider.apiKey)}`;
 
+  const thinkingBudget = geminiThinkingBudget(request.model);
   const body = {
     systemInstruction: { parts: [{ text: request.system }] },
     contents: request.messages.map((message) => ({
@@ -41,9 +54,11 @@ export async function callGemini(provider: ProviderConfig, request: Parameters<A
       parts: [{ text: message.content }],
     })),
     generationConfig: {
-      maxOutputTokens: request.maxOutputTokens,
+      // Thinking tokens count against maxOutputTokens, so they get their own room on top.
+      maxOutputTokens: request.maxOutputTokens +(thinkingBudget ?? 0),
       temperature: request.temperature ?? 0.4,
       ...(request.responseFormat === "json" ? { responseMimeType: "application/json" } : {}),
+      ...(thinkingBudget !== undefined ? { thinkingConfig: { thinkingBudget } } : {}),
     },
   };
 

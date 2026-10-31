@@ -132,6 +132,7 @@ export async function reviewTask(taskId: string, round: number, minScore: number
   try {
     let result = await completeForAgent({
       agentId: reviewer.id,
+      purpose: "review",
       taskId,
       runId: run.id,
       system: reviewer.systemPrompt,
@@ -152,6 +153,7 @@ ${result.text.slice(0, 8000)}`;
 
       const repaired = await completeForAgent({
         agentId: reviewer.id,
+        purpose: "review",
         taskId,
         runId: run.id,
         system: reviewer.systemPrompt,

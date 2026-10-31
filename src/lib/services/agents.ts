@@ -74,6 +74,7 @@ export async function updateAgent(id: string, input: AgentUpdateInput, actorId: 
   if (input.systemPrompt !== undefined) data.systemPrompt = input.systemPrompt;
   if (input.model !== undefined) data.model = input.model;
   if (input.fallbackModel !== undefined) data.fallbackModel = input.fallbackModel;
+  if (input.autoModel !== undefined) data.autoModel = input.autoModel;
   if (input.maxIterations !== undefined) data.maxIterations = input.maxIterations;
   if (input.dailyTokenLimit !== undefined) data.dailyTokenLimit = input.dailyTokenLimit;
   if (input.status !== undefined) data.status = input.status;

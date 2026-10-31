@@ -148,6 +148,7 @@ export async function createPlan(taskId: string): Promise<number> {
   try {
     let result = await completeForAgent({
       agentId: pm.id,
+      purpose: "review",
       taskId,
       runId: run.id,
       system: pm.systemPrompt,
@@ -170,6 +171,7 @@ ${result.text.slice(0, 12000)}`;
 
       const repaired = await completeForAgent({
         agentId: pm.id,
+        purpose: "review",
         taskId,
         runId: run.id,
         system: pm.systemPrompt,

@@ -44,6 +44,7 @@ export async function composeFinalDeliverable(taskId: string, review: ReviewOutc
   try {
     const result = await completeForAgent({
       agentId: pm.id,
+      purpose: "review",
       taskId,
       system:
         "Eres el Project Manager. Unes el trabajo del equipo en un único entregable final, listo para que el director lo use. Respondes en español y en Markdown.",

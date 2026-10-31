@@ -4,6 +4,8 @@ import { ArrowLeft, CheckCircle2, FileText, Play } from "lucide-react";
 import { db } from "@/lib/db";
 import { getAgentDetail } from "@/lib/services/agents";
 import { listProviders } from "@/lib/services/providers";
+import { previewAutoModels } from "@/ai/manager";
+import { QA_SLUG, PM_SLUG } from "@/engine/quality";
 import { NotFoundError } from "@/lib/errors";
 import { AGENT_STATUS_DOT, AGENT_STATUS_LABELS, DELIVERABLE_TYPE_LABELS, RUN_STATUS_LABELS } from "@/lib/constants";
 import { formatDateTime, initials, timeAgo } from "@/lib/format";
@@ -29,6 +31,7 @@ export default async function AgentDetailPage({ params }: { params: Promise<{ id
     orderBy: { order: "asc" },
   });
   const providers = await listProviders();
+  const autoRanking = await previewAutoModels(agent.slug === QA_SLUG || agent.slug === PM_SLUG ? "review" : "work");
 
   return (
     <div>
@@ -62,7 +65,9 @@ export default async function AgentDetailPage({ params }: { params: Promise<{ id
             <span className={`h-1.5 w-1.5 rounded-full ${AGENT_STATUS_DOT[agent.status]}`} />
             {AGENT_STATUS_LABELS[agent.status]}
           </span>
-          <span className="chip border-white/10 bg-white/[0.03] text-zinc-400">{agent.model}</span>
+          <span className="chip border-white/10 bg-white/[0.03] text-zinc-400">
+            {agent.autoModel ? `Automático · ${autoRanking[0]?.model ?? "sin modelos"}` : agent.model}
+          </span>
           <span className="chip border-white/10 bg-white/[0.03] text-zinc-400">
             {agent._count.runs} ejecuciones
           </span>
@@ -80,6 +85,7 @@ export default async function AgentDetailPage({ params }: { params: Promise<{ id
             systemPrompt: agent.systemPrompt,
             model: agent.model,
             fallbackModel: agent.fallbackModel,
+            autoModel: agent.autoModel,
             maxIterations: agent.maxIterations,
             dailyTokenLimit: agent.dailyTokenLimit,
             status: agent.status,
@@ -94,6 +100,7 @@ export default async function AgentDetailPage({ params }: { params: Promise<{ id
             })),
           }}
           departments={departments}
+          autoRanking={autoRanking}
           providers={providers.map((provider) => ({
             id: provider.id,
             name: provider.name,

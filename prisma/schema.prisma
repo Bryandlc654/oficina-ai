@@ -198,6 +198,8 @@ model Agent {
   status                AgentStatus @default(AVAILABLE)
   model                 String
   fallbackModel         String?
+  /// Pick the best configured model automatically instead of provider/model below.
+  autoModel             Boolean     @default(true)
   maxIterations         Int         @default(5)
   dailyTokenLimit       Int?
   currentSubtaskId      String?

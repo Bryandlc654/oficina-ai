@@ -3,6 +3,7 @@ import { db } from "../lib/db";
 import { decryptSecret } from "../lib/crypto";
 import { getOfficeSettings } from "../lib/services/organization";
 import { getOpenRouterApiKey } from "./openrouter-env";
+import { modelScore, rankModels, type ModelPurpose } from "./model-ranking";
 import { getAdapter } from "./providers";
 import {
   AIProviderError,
@@ -31,6 +32,8 @@ export type CompletionInput = {
   temperature?: number;
   responseFormat?: "text" | "json";
   signal?: AbortSignal;
+  /** Steers automatic model choice: chat favours speed, review/work favour quality. */
+  purpose?: ModelPurpose;
 };
 
 type Candidate = {
@@ -97,6 +100,68 @@ function buildCandidates(agent: AgentWithProviders, enabledProviders: ProviderRo
   }
 
   return { candidates, reasons };
+}
+
+const MAX_AUTO_CANDIDATES = 6;
+
+/** Every configured model across enabled providers, best first. */
+function autoCandidates(enabledProviders: ProviderRow[], purpose: ModelPurpose): Resolution {
+  const reasons: string[] = [];
+  const pool: (Candidate & { providerType: string })[] = [];
+  for (const provider of enabledProviders) {
+    if (!isConfigured(provider)) {
+      reasons.push(`${provider.name} no tiene clave de API`);
+      continue;
+    }
+    for (const model of modelsOf(provider)) {
+      pool.push({ provider, model, providerType: provider.type });
+    }
+  }
+  const candidates = rankModels(pool, purpose)
+    .slice(0, MAX_AUTO_CANDIDATES)
+    .map(({ provider, model }) => ({ provider, model }));
+  return { candidates, reasons };
+}
+
+/** What automatic mode would try right now, best first (for the employee page). */
+export async function previewAutoModels(purpose: ModelPurpose) {
+  const enabledProviders = await db.aIProvider.findMany({
+    where: { isEnabled: true },
+    orderBy: { priority: "asc" },
+  });
+  const now = Date.now();
+  return autoCandidates(enabledProviders, purpose).candidates.map((candidate) => ({
+    providerName: candidate.provider.name,
+    model: candidate.model,
+    score: modelScore({ providerType: candidate.provider.type, model: candidate.model }, purpose),
+    coolingDown: (cooldowns.get(cooldownKey(candidate)) ?? 0) > now,
+  }));
+}
+
+// Per process: models that just failed are skipped for a while so the next best one
+// answers straight away instead of every call retrying a model at its limit.
+const cooldowns = new Map<string, number>();
+const cooldownKey = (candidate: Candidate) => `${candidate.provider.id}:${candidate.model}`;
+
+function coolDown(candidate: Candidate, error: AIProviderError): void {
+  const minutes =
+    error.status === 404 || /does not exist|not found|no endpoints/i.test(error.message)
+      ? 360
+      : error.code === "AUTH"
+        ? 30
+        : error.code === "RATE_LIMIT" || error.code === "QUOTA"
+          ? 5
+          : error.code === "TIMEOUT" || error.code === "SERVER"
+            ? 2
+            : 0;
+  if (minutes > 0) cooldowns.set(cooldownKey(candidate), Date.now() + minutes * 60_000);
+}
+
+function withoutCooldowns(candidates: Candidate[]): Candidate[] {
+  const now = Date.now();
+  const ready = candidates.filter((candidate) => (cooldowns.get(cooldownKey(candidate)) ?? 0) <= now);
+  // If everything is cooling down, trying beats failing outright.
+  return ready.length > 0 ? ready : candidates;
 }
 
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
@@ -178,7 +243,11 @@ export async function completeForAgent(input: CompletionInput): Promise<ChatResu
     orderBy: { priority: "asc" },
   });
 
-  const { candidates, reasons } = buildCandidates(agent, enabledProviders);
+  const resolution = agent.autoModel
+    ? autoCandidates(enabledProviders, input.purpose ?? "work")
+    : buildCandidates(agent, enabledProviders);
+  const { reasons } = resolution;
+  const candidates = withoutCooldowns(resolution.candidates);
 
   if (candidates.length === 0) {
     throw new AIProviderError(
@@ -286,6 +355,7 @@ export async function completeForAgent(input: CompletionInput): Promise<ChatResu
           }
 
           lastError = normalized;
+          coolDown(candidate, normalized);
 
           if (!normalized.retryable || attempt === 2 || normalized.code === "RATE_LIMIT") break;
           await delay(600 * attempt, input.signal);

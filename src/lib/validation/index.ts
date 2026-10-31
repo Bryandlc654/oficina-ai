@@ -39,6 +39,7 @@ export const agentUpdateSchema = z.object({
   systemPrompt: z.string().trim().min(20).max(20000).optional(),
   model: z.string().trim().min(1).max(120).optional(),
   fallbackModel: z.string().trim().max(120).nullable().optional(),
+  autoModel: z.boolean().optional(),
   maxIterations: z.number().int().min(1).max(20).optional(),
   dailyTokenLimit: z.number().int().min(1000).max(10_000_000).nullable().optional(),
   departmentId: z.string().min(1).optional(),

@@ -138,6 +138,7 @@ async function replyInTurn(channel: string, agentIds: string[], agents: ChatAgen
       for (const temperature of [0.5, 0.2]) {
         const result = await completeForAgent({
           agentId: agent.id,
+          purpose: "chat",
           taskId: null,
           system,
           messages,
