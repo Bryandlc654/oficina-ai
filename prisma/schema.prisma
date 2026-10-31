@@ -1,0 +1,604 @@
+// AI Virtual Office - Prisma schema (MySQL 8+)
+// All long-form content uses @db.Text so agent outputs are not truncated.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  ADMIN
+}
+
+enum AgentStatus {
+  AVAILABLE
+  WORKING
+  ON_BREAK
+  OFFLINE
+}
+
+enum ProjectStatus {
+  PLANNING
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  ARCHIVED
+}
+
+enum TaskStatus {
+  SCHEDULED
+  PENDING
+  PLANNING
+  RUNNING
+  REVIEW
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum SubtaskStatus {
+  PENDING
+  ASSIGNED
+  RUNNING
+  REVIEW
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum RunStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+enum DeliverableType {
+  DOCUMENT
+  REPORT
+  STRATEGY
+  ANALYSIS
+  TEXT
+  CODE
+  ATTACHMENT
+  PROMPT
+}
+
+enum AIProviderType {
+  GEMINI
+  GROQ
+  OLLAMA
+  OPENROUTER
+}
+
+enum MemoryScope {
+  COMPANY
+  AGENT
+  TASK
+}
+
+enum MessageRole {
+  SYSTEM
+  USER
+  ASSISTANT
+  TOOL
+}
+
+enum ActorType {
+  ADMIN
+  AGENT
+  SYSTEM
+}
+
+enum AssignmentRole {
+  OWNER
+  CONTRIBUTOR
+  REVIEWER
+}
+
+enum ToolType {
+  BUILTIN
+  HTTP
+  INTEGRATION
+}
+
+enum ScheduleStatus {
+  PENDING
+  QUEUED
+  ACTIVE
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum ApprovalStatus {
+  NOT_REQUIRED
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum KnowledgeKind {
+  COMPANY
+  SERVICE
+  PRODUCT
+  CLIENT
+  PROCEDURE
+  DOCUMENT
+  GOAL
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         UserRole @default(ADMIN)
+  lastLoginAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tasks        Task[]        @relation("TaskCreator")
+  projects     Project[]
+  settings     Setting[]
+
+  @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// Organization
+// ---------------------------------------------------------------------------
+
+model Department {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  slug        String   @unique
+  description String   @db.Text
+  color       String   @default("#34d399")
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  agents Agent[]
+  tasks  Task[]
+
+  @@map("departments")
+}
+
+model Agent {
+  id                    String      @id @default(cuid())
+  name                  String
+  slug                  String      @unique
+  role                  String
+  avatarUrl             String?
+  personality           String      @db.Text
+  responsibilities      String      @db.Text
+  systemPrompt          String      @db.Text
+  systemPromptLocked    Boolean     @default(true)
+  status                AgentStatus @default(AVAILABLE)
+  model                 String
+  fallbackModel         String?
+  maxIterations         Int         @default(5)
+  dailyTokenLimit       Int?
+  currentSubtaskId      String?
+  departmentId          String
+  providerId            String?
+  fallbackProviderId    String?
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+
+  department        Department       @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  currentSubtask    Subtask?         @relation("AgentCurrentSubtask", fields: [currentSubtaskId], references: [id], onDelete: SetNull)
+  provider          AIProvider?      @relation("AgentPrimaryProvider", fields: [providerId], references: [id], onDelete: SetNull)
+  fallbackProvider  AIProvider?      @relation("AgentFallbackProvider", fields: [fallbackProviderId], references: [id], onDelete: SetNull)
+  tools             AgentTool[]
+  memories          AgentMemory[]
+  assignments       TaskAssignment[]
+  subtasks          Subtask[]
+  runs              AgentRun[]
+  sentMessages      AgentMessage[]   @relation("MessageFrom")
+  receivedMessages  AgentMessage[]   @relation("MessageTo")
+  deliverables      Deliverable[]
+  usage             AIUsage[]
+
+  @@index([departmentId])
+  @@index([status])
+  @@index([currentSubtaskId])
+  @@map("agents")
+}
+
+// ---------------------------------------------------------------------------
+// AI infrastructure
+// ---------------------------------------------------------------------------
+
+model AIProvider {
+  id          String         @id @default(cuid())
+  name        String         @unique
+  type        AIProviderType
+  baseUrl     String?
+  apiKeyCipher String?       @db.Text
+  models      Json?
+  isEnabled   Boolean        @default(false)
+  isDefault   Boolean        @default(false)
+  priority    Int            @default(0)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  primaryAgents  Agent[]   @relation("AgentPrimaryProvider")
+  fallbackAgents Agent[]   @relation("AgentFallbackProvider")
+  runs           AgentRun[]
+  usage          AIUsage[]
+
+  @@index([isEnabled, priority])
+  @@map("ai_providers")
+}
+
+model AIUsage {
+  id           String   @id @default(cuid())
+  agentId      String
+  providerId   String
+  runId        String?
+  taskId       String?
+  model        String
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  totalTokens  Int      @default(0)
+  costMicros   Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  agent    Agent       @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  provider AIProvider  @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  run      AgentRun?   @relation(fields: [runId], references: [id], onDelete: SetNull)
+  task     Task?       @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  @@index([agentId, createdAt])
+  @@index([taskId])
+  @@index([createdAt])
+  @@map("ai_usage")
+}
+
+model AgentTool {
+  id               String   @id @default(cuid())
+  agentId          String
+  name             String
+  description      String   @db.Text
+  type             ToolType @default(BUILTIN)
+  config           Json?
+  isEnabled        Boolean  @default(true)
+  requiresApproval Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([agentId, name])
+  @@map("agent_tools")
+}
+
+// ---------------------------------------------------------------------------
+// Knowledge and memory
+// ---------------------------------------------------------------------------
+
+model CompanyKnowledge {
+  id        String        @id @default(cuid())
+  kind      KnowledgeKind @default(COMPANY)
+  category  String
+  title     String
+  content   String        @db.Text
+  tags      Json?
+  isActive  Boolean       @default(true)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@index([kind, isActive])
+  @@index([category])
+  @@map("company_knowledge")
+}
+
+model AgentMemory {
+  id         String      @id @default(cuid())
+  agentId    String
+  scope      MemoryScope @default(AGENT)
+  title      String
+  content    String      @db.Text
+  tags       Json?
+  importance Int         @default(1)
+  source     String?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId, scope])
+  @@map("agent_memories")
+}
+
+// ---------------------------------------------------------------------------
+// Projects and tasks
+// ---------------------------------------------------------------------------
+
+model Project {
+  id          String        @id @default(cuid())
+  name        String
+  description String        @db.Text
+  objective   String        @db.Text
+  status      ProjectStatus @default(PLANNING)
+  startDate   DateTime?
+  dueDate     DateTime?
+  createdById String
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  createdBy User   @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  tasks     Task[]
+
+  @@index([status])
+  @@map("projects")
+}
+
+model Task {
+  id             String         @id @default(cuid())
+  title          String
+  objective      String         @db.Text
+  description    String         @db.Text
+  priority       TaskPriority   @default(MEDIUM)
+  status         TaskStatus     @default(PENDING)
+  scheduledFor   DateTime?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  pausedAt       DateTime?
+  tokenBudget    Int            @default(0)
+  tokensUsed     Int            @default(0)
+  maxIterations  Int            @default(5)
+  approvalStatus ApprovalStatus @default(NOT_REQUIRED)
+  finalReport    String?        @db.Text
+  errorMessage   String?        @db.Text
+  createdById    String
+  departmentId   String?
+  projectId      String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  createdBy    User             @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  department   Department?      @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  project      Project?         @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  subtasks     Subtask[]
+  assignments  TaskAssignment[]
+  runs         AgentRun[]
+  messages     AgentMessage[]
+  deliverables Deliverable[]
+  scheduledJobs ScheduledJob[]
+  usage        AIUsage[]
+
+  @@index([status, scheduledFor])
+  @@index([priority])
+  @@index([projectId])
+  @@index([createdAt])
+  @@map("tasks")
+}
+
+model Subtask {
+  id                  String        @id @default(cuid())
+  taskId              String
+  title               String
+  objective           String        @db.Text
+  description         String        @db.Text
+  expectedDeliverable String        @db.Text
+  order               Int
+  status              SubtaskStatus @default(PENDING)
+  assignedAgentId     String?
+  result              String?       @db.Text
+  tokensUsed          Int           @default(0)
+  iterations          Int           @default(0)
+  startedAt           DateTime?
+  completedAt         DateTime?
+  errorMessage        String?       @db.Text
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  task        Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  assignedAgent Agent?     @relation(fields: [assignedAgentId], references: [id], onDelete: SetNull)
+  currentForAgents Agent[] @relation("AgentCurrentSubtask")
+  assignments TaskAssignment[]
+  dependencies   TaskDependency[] @relation("SubtaskDependencies")
+  dependents     TaskDependency[] @relation("SubtaskDependents")
+  runs          AgentRun[]
+  messages      AgentMessage[]
+  deliverables  Deliverable[]
+
+  @@unique([taskId, order])
+  @@index([assignedAgentId])
+  @@index([status])
+  @@map("subtasks")
+}
+
+model TaskDependency {
+  id          String @id @default(cuid())
+  subtaskId   String
+  dependsOnId String
+  createdAt   DateTime @default(now())
+
+  subtask   Subtask @relation("SubtaskDependencies", fields: [subtaskId], references: [id], onDelete: Cascade)
+  dependsOn Subtask @relation("SubtaskDependents", fields: [dependsOnId], references: [id], onDelete: Cascade)
+
+  @@unique([subtaskId, dependsOnId])
+  @@index([dependsOnId])
+  @@map("task_dependencies")
+}
+
+model TaskAssignment {
+  id        String         @id @default(cuid())
+  taskId    String?
+  subtaskId String?
+  agentId   String
+  role      AssignmentRole @default(CONTRIBUTOR)
+  createdAt DateTime       @default(now())
+
+  task    Task?    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  subtask Subtask? @relation(fields: [subtaskId], references: [id], onDelete: Cascade)
+  agent   Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, agentId, role])
+  @@unique([subtaskId, agentId, role])
+  @@index([agentId])
+  @@map("task_assignments")
+}
+
+// ---------------------------------------------------------------------------
+// Execution
+// ---------------------------------------------------------------------------
+
+model AgentRun {
+  id           String    @id @default(cuid())
+  taskId       String
+  subtaskId    String?
+  agentId      String
+  providerId   String?
+  status       RunStatus @default(QUEUED)
+  attempt      Int       @default(1)
+  iteration    Int       @default(1)
+  model        String
+  prompt       String?   @db.LongText
+  output       String?   @db.LongText
+  error        String?   @db.Text
+  inputTokens  Int       @default(0)
+  outputTokens Int       @default(0)
+  totalTokens  Int       @default(0)
+  latencyMs    Int?
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  task     Task        @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  subtask  Subtask?    @relation(fields: [subtaskId], references: [id], onDelete: SetNull)
+  agent    Agent       @relation(fields: [agentId], references: [id], onDelete: Restrict)
+  provider AIProvider? @relation(fields: [providerId], references: [id], onDelete: SetNull)
+  usage    AIUsage[]
+  messages AgentMessage[]
+  deliverables Deliverable[]
+
+  @@index([agentId, createdAt])
+  @@index([taskId])
+  @@index([subtaskId])
+  @@index([status])
+  @@map("agent_runs")
+}
+
+model AgentMessage {
+  id          String      @id @default(cuid())
+  taskId      String
+  subtaskId   String?
+  runId       String?
+  fromAgentId String?
+  toAgentId   String?
+  role        MessageRole
+  content     String      @db.LongText
+  metadata    Json?
+  createdAt   DateTime    @default(now())
+
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  subtask   Subtask? @relation(fields: [subtaskId], references: [id], onDelete: SetNull)
+  run       AgentRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
+  fromAgent Agent?   @relation("MessageFrom", fields: [fromAgentId], references: [id], onDelete: SetNull)
+  toAgent   Agent?   @relation("MessageTo", fields: [toAgentId], references: [id], onDelete: SetNull)
+
+  @@index([taskId, createdAt])
+  @@index([fromAgentId])
+  @@map("agent_messages")
+}
+
+model Deliverable {
+  id         String          @id @default(cuid())
+  taskId     String
+  subtaskId  String?
+  agentId    String
+  runId      String?
+  title      String
+  type       DeliverableType
+  content    String?         @db.LongText
+  fileUrl    String?
+  fileName   String?
+  mimeType   String?
+  sizeBytes  Int?
+  createdAt  DateTime        @default(now())
+
+  task    Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  subtask Subtask?  @relation(fields: [subtaskId], references: [id], onDelete: SetNull)
+  agent   Agent     @relation(fields: [agentId], references: [id], onDelete: Restrict)
+  run     AgentRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
+
+  @@index([taskId])
+  @@index([agentId, createdAt])
+  @@map("deliverables")
+}
+
+model ScheduledJob {
+  id        String         @id @default(cuid())
+  taskId    String
+  jobId     String         @unique
+  queue     String         @default("task-execution")
+  status    ScheduleStatus @default(PENDING)
+  runAt     DateTime
+  attempts  Int            @default(0)
+  lastError String?        @db.Text
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+  @@index([runAt, status])
+  @@map("scheduled_jobs")
+}
+
+// ---------------------------------------------------------------------------
+// Observability and configuration
+// ---------------------------------------------------------------------------
+
+model ActivityLog {
+  id         String    @id @default(cuid())
+  actorType  ActorType
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String?
+  metadata   Json?
+  createdAt  DateTime  @default(now())
+
+  @@index([createdAt])
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@map("activity_logs")
+}
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+  updatedById String?
+
+  updatedBy User? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@map("settings")
+}

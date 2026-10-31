@@ -1,0 +1,1 @@
+ALTER TABLE `ai_providers` MODIFY `type` ENUM('GEMINI', 'GROQ', 'OLLAMA', 'OPENROUTER') NOT NULL;
