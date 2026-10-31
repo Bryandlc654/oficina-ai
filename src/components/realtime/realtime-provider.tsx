@@ -7,18 +7,40 @@ import { cn } from "@/lib/format";
 
 type RealtimeStatus = "connecting" | "online" | "offline";
 
-type OfficeEvent = {
+export type OfficeEvent = {
   type: string;
   status?: string;
   message?: string;
+  channel?: string;
+  agentId?: string;
+  agentName?: string;
 };
+
+type Listener = (event: OfficeEvent) => void;
 
 type Toast = { id: number; text: string; kind: "info" | "ok" | "warn" };
 
-const RealtimeContext = createContext<{ status: RealtimeStatus }>({ status: "connecting" });
+const RealtimeContext = createContext<{ status: RealtimeStatus; listeners: Set<Listener> }>({
+  status: "connecting",
+  listeners: new Set(),
+});
 
 export function useRealtimeStatus() {
   return useContext(RealtimeContext);
+}
+
+/** Subscribe to raw office events (e.g. chat) without waiting for a page refresh. */
+export function useOfficeEvents(handler: Listener) {
+  const { listeners } = useContext(RealtimeContext);
+  const ref = useRef(handler);
+  ref.current = handler;
+  useEffect(() => {
+    const listener: Listener = (event) => ref.current(event);
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  }, [listeners]);
 }
 
 function toastText(event: OfficeEvent): string | null {
@@ -50,6 +72,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const counter = useRef(0);
+  const [listeners] = useState(() => new Set<Listener>());
 
   useEffect(() => {
     const socket = io({
@@ -63,6 +86,10 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
     socket.on("connect_error", () => setStatus("offline"));
 
     socket.on("office:event", (event: OfficeEvent) => {
+      listeners.forEach((listener) => listener(event));
+      // Chat has its own live view; it shouldn't toast or re-render every page.
+      if (event.type.startsWith("chat.")) return;
+
       const text = toastText(event);
       if (text) {
         counter.current += 1;
@@ -83,10 +110,10 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
       socket.disconnect();
     };
-  }, [router]);
+  }, [router, listeners]);
 
   return (
-    <RealtimeContext.Provider value={{ status }}>
+    <RealtimeContext.Provider value={{ status, listeners }}>
       {children}
       <div className="pointer-events-none fixed bottom-4 right-4 z-[70] flex w-[min(22rem,calc(100vw-2rem))] flex-col gap-2">
         {toasts.map((toast) => (

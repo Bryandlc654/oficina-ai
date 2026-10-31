@@ -14,7 +14,9 @@ export type OfficeEventType =
   | "subtask.status"
   | "agent.status"
   | "deliverable.created"
-  | "office.paused";
+  | "office.paused"
+  | "chat.message"
+  | "chat.typing";
 
 export type OfficeEventInput = {
   type: OfficeEventType;
@@ -24,6 +26,7 @@ export type OfficeEventInput = {
   agentName?: string;
   status?: string;
   message?: string;
+  channel?: string;
 };
 
 export type OfficeEvent = OfficeEventInput & { at: string };

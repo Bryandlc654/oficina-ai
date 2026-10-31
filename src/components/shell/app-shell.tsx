@@ -15,6 +15,7 @@ import {
   ListTodo,
   LogOut,
   Menu,
+  MessagesSquare,
   Pause,
   Play,
   Settings,
@@ -37,6 +38,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
     items: [
       { href: "/dashboard", label: "Resumen", icon: LayoutDashboard },
       { href: "/office", label: "Oficina 3D", icon: Boxes },
+      { href: "/chat", label: "Chat", icon: MessagesSquare },
       { href: "/tasks", label: "Tareas", icon: ListTodo },
       { href: "/projects", label: "Proyectos", icon: FolderKanban },
       { href: "/deliverables", label: "Entregables", icon: FileText },

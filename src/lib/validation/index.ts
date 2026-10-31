@@ -104,6 +104,13 @@ export const agentMemoryCreateSchema = z.object({
 
 export const agentMemoryUpdateSchema = agentMemoryCreateSchema.partial();
 
+export const chatChannelSchema = z.string().regex(/^(group|dm:[a-z0-9]+)$/, "Canal no válido");
+
+export const chatMessageCreateSchema = z.object({
+  channel: chatChannelSchema,
+  content: z.string().trim().min(1, "Escribe un mensaje").max(4000),
+});
+
 export type LoginInput = z.infer<typeof loginSchema>;
 export type TaskCreateInput = z.infer<typeof taskCreateSchema>;
 export type TaskUpdateInput = z.infer<typeof taskUpdateSchema>;
@@ -114,4 +121,5 @@ export type ProviderUpdateInput = z.infer<typeof providerUpdateSchema>;
 export type KnowledgeCreateInput = z.infer<typeof knowledgeCreateSchema>;
 export type KnowledgeUpdateInput = z.infer<typeof knowledgeUpdateSchema>;
 export type AgentMemoryCreateInput = z.infer<typeof agentMemoryCreateSchema>;
+export type ChatMessageCreateInput = z.infer<typeof chatMessageCreateSchema>;
 export type AgentMemoryUpdateInput = z.infer<typeof agentMemoryUpdateSchema>;

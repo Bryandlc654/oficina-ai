@@ -21,7 +21,8 @@ type AgentWithProviders = Agent & {
 
 export type CompletionInput = {
   agentId: string;
-  taskId: string;
+  /** Null for work outside a task, such as office chat replies. */
+  taskId: string | null;
   subtaskId?: string | null;
   runId?: string | null;
   system: string;
@@ -152,14 +153,17 @@ export async function completeForAgent(input: CompletionInput): Promise<ChatResu
     }
   }
 
-  const task = await db.task.findUnique({
-    where: { id: input.taskId },
-    select: { status: true, pausedAt: true },
-  });
+  const taskId = input.taskId;
+  if (taskId) {
+    const task = await db.task.findUnique({
+      where: { id: taskId },
+      select: { status: true, pausedAt: true },
+    });
 
-  if (!task) throw new AIProviderError("La tarea no existe", "NOT_CONFIGURED");
-  if (task.status === "CANCELLED") throw new AIProviderError("La tarea fue cancelada", "CANCELLED");
-  if (task.pausedAt) throw new AIProviderError("La tarea está pausada", "TASK_PAUSED");
+    if (!task) throw new AIProviderError("La tarea no existe", "NOT_CONFIGURED");
+    if (task.status === "CANCELLED") throw new AIProviderError("La tarea fue cancelada", "CANCELLED");
+    if (task.pausedAt) throw new AIProviderError("La tarea está pausada", "TASK_PAUSED");
+  }
 
   const maxOutputTokens = input.maxOutputTokens;
 
@@ -231,15 +235,17 @@ export async function completeForAgent(input: CompletionInput): Promise<ChatResu
         try {
           const result = await adapter(config, request);
 
-          const after = await db.task.findUnique({ where: { id: input.taskId }, select: { status: true } });
-          if (after?.status === "CANCELLED") {
-            throw new AIProviderError("La tarea fue cancelada durante la ejecución", "CANCELLED");
-          }
+          if (taskId) {
+            const after = await db.task.findUnique({ where: { id: taskId }, select: { status: true } });
+            if (after?.status === "CANCELLED") {
+              throw new AIProviderError("La tarea fue cancelada durante la ejecución", "CANCELLED");
+            }
 
-          await db.task.update({
-            where: { id: input.taskId },
-            data: { tokensUsed: { increment: result.totalTokens } },
-          }).catch((error) => console.error("[ai] no se pudo actualizar el consumo de la tarea", error));
+            await db.task.update({
+              where: { id: taskId },
+              data: { tokensUsed: { increment: result.totalTokens } },
+            }).catch((error) => console.error("[ai] no se pudo actualizar el consumo de la tarea", error));
+          }
 
           try {
             await db.aIUsage.create({
@@ -247,7 +253,7 @@ export async function completeForAgent(input: CompletionInput): Promise<ChatResu
                 agentId: agent.id,
                 providerId: provider.id,
                 runId: input.runId ?? null,
-                taskId: input.taskId,
+                taskId,
                 model: result.model,
                 inputTokens: result.inputTokens,
                 outputTokens: result.outputTokens,

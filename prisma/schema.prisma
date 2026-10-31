@@ -220,6 +220,7 @@ model Agent {
   receivedMessages  AgentMessage[]   @relation("MessageTo")
   deliverables      Deliverable[]
   usage             AIUsage[]
+  chatMessages      ChatMessage[]
 
   @@index([departmentId])
   @@index([status])
@@ -570,6 +571,27 @@ model ScheduledJob {
   @@index([taskId])
   @@index([runAt, status])
   @@map("scheduled_jobs")
+}
+
+// ---------------------------------------------------------------------------
+// Office chat (admin <-> agents)
+// ---------------------------------------------------------------------------
+
+// channel is "group" or "dm:<agentId>". agentId is the author when authorType is AGENT.
+model ChatMessage {
+  id         String    @id @default(cuid())
+  channel    String
+  authorType ActorType
+  agentId    String?
+  content    String    @db.Text
+  mentions   Json?
+  createdAt  DateTime  @default(now())
+
+  agent Agent? @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([channel, createdAt])
+  @@index([agentId])
+  @@map("chat_messages")
 }
 
 // ---------------------------------------------------------------------------
