@@ -8,6 +8,7 @@ import { getOfficeSettings } from "../lib/services/organization";
 import { publishOfficeEvent } from "../realtime/publish";
 import { loadTaskSubtasks } from "./context";
 import { executeSubtask } from "./executor";
+import { clientDocumentBody, isClientDocument } from "./client-document";
 import { composeFinalDeliverable } from "./finalizer";
 import { createPlan } from "./planner";
 import { reviewTask } from "./reviewer";
@@ -208,19 +209,29 @@ async function executeAllSubtasks(taskId: string): Promise<void> {
   throw new AppError("Se excedió el límite de ciclos de ejecución", 500, "CYCLE_LIMIT");
 }
 
-async function recordFinalReport(taskId: string, title: string, content: string): Promise<void> {
-  const pm = await db.agent.findUnique({ where: { slug: PM_SLUG }, select: { id: true } });
-  if (!pm) return;
+/**
+ * Each task has exactly one deliverable: the final document. Later rounds (revisions,
+ * approval) replace its content instead of piling up new versions.
+ */
+async function saveFinalDeliverable(taskId: string, finalReport: string): Promise<void> {
+  const [task, pm] = await Promise.all([
+    db.task.findUnique({ where: { id: taskId }, select: { title: true, objective: true, description: true } }),
+    db.agent.findUnique({ where: { slug: PM_SLUG }, select: { id: true } }),
+  ]);
+  if (!task || !pm) return;
 
-  await db.deliverable.create({
-    data: {
-      taskId,
-      agentId: pm.id,
-      title: title.slice(0, 180),
-      type: "REPORT",
-      content,
-    },
-  });
+  const data = {
+    title: task.title.slice(0, 180),
+    type: isClientDocument(`${task.title} ${task.objective} ${task.description}`) ? ("DOCUMENT" as const) : ("REPORT" as const),
+    // The quality-control quote lives in the task's final report, not in the document itself.
+    content: clientDocumentBody(finalReport),
+    agentId: pm.id,
+  };
+  const existing = await db.deliverable.findFirst({ where: { taskId, subtaskId: null }, select: { id: true } });
+  if (existing) await db.deliverable.update({ where: { id: existing.id }, data });
+  else await db.deliverable.create({ data: { ...data, taskId } });
+
+  void publishOfficeEvent({ type: "deliverable.created", taskId, message: `Entregable listo: ${task.title}` });
 }
 
 async function finalizeApproved(taskId: string, finalReport: string): Promise<void> {
@@ -242,18 +253,6 @@ async function finalizeApproved(taskId: string, finalReport: string): Promise<vo
       },
     });
 
-    if (pm) {
-      await tx.deliverable.create({
-        data: {
-          taskId,
-          agentId: pm.id,
-          title: `Entregable final — ${task.title}`.slice(0, 180),
-          type: "REPORT",
-          content: finalReport,
-        },
-      });
-    }
-
     await logActivity(
       {
         actorType: "AGENT",
@@ -267,6 +266,7 @@ async function finalizeApproved(taskId: string, finalReport: string): Promise<vo
     );
   }, { maxWait: 10000, timeout: 30000 });
 
+  await saveFinalDeliverable(taskId, finalReport);
   await resetAgents(taskId);
 
   void publishOfficeEvent({
@@ -312,6 +312,7 @@ async function holdForApproval(
     metadata: { observations: review.observations.slice(0, 1000) },
   });
 
+  await saveFinalDeliverable(taskId, review.finalReport);
   await resetAgents(taskId);
 
   void publishOfficeEvent({
@@ -332,7 +333,7 @@ async function failTask(taskId: string, message: string, finalReport?: string): 
   if (task.status === TaskStatus.CANCELLED || task.status === TaskStatus.COMPLETED) return;
 
   if (finalReport && finalReport.trim().length > 0) {
-    await recordFinalReport(taskId, `Informe de revisión — ${task.title}`, finalReport).catch(() => undefined);
+    await saveFinalDeliverable(taskId, finalReport).catch(() => undefined);
   }
 
   await db.task.update({

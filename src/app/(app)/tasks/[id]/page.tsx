@@ -70,6 +70,11 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
     .slice(-10);
   const completedSubtasks = task.subtasks.filter((subtask) => subtask.status === "COMPLETED").length;
   const progress = task.subtasks.length > 0 ? Math.round((completedSubtasks / task.subtasks.length) * 100) : 0;
+  // New tasks have a single task-level deliverable; older ones also kept one per subtask.
+  const finalDeliverable = task.deliverables.find((deliverable) => deliverable.subtaskId === null) ?? null;
+  const qualityNote = task.finalReport
+    ? task.finalReport.split("\n").filter((line) => line.startsWith(">")).join("\n")
+    : "";
 
   return (
     <div>
@@ -226,15 +231,15 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
 
           <section className="panel">
             <div className="flex items-center justify-between border-b border-white/6 px-5 py-4">
-              <h2 className="text-sm font-semibold text-white">Entregables</h2>
-              <span className="text-xs text-zinc-500">{task.deliverables.length}</span>
+              <h2 className="text-sm font-semibold text-white">{task.deliverables.length > 1 ? "Entregables" : "Entregable"}</h2>
+              {task.deliverables.length > 1 ? <span className="text-xs text-zinc-500">{task.deliverables.length}</span> : null}
             </div>
 
             {task.deliverables.length === 0 ? (
               <div className="p-5">
                 <EmptyState
-                  title="Sin entregables"
-                  description="Los documentos, informes, análisis y código producidos por los agentes aparecerán aquí."
+                  title="Sin entregable todavía"
+                  description="Cuando el equipo termine y se revise el trabajo, aquí aparecerá el documento final de la tarea."
                 />
               </div>
             ) : (
@@ -249,15 +254,23 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
                           {formatDateTime(deliverable.createdAt)}
                         </p>
                       </div>
-                      <DownloadDeliverable
-                        title={deliverable.title}
-                        content={deliverable.content}
-                        fileUrl={deliverable.fileUrl}
-                        fileName={deliverable.fileName}
-                      />
+                      <div className="flex items-center gap-1.5">
+                        {deliverable.subtaskId === null ? (
+                          <Link href={`/print/tasks/${task.id}`} target="_blank" className="btn-secondary px-2 py-1 text-[11px]">
+                            <FileDown className="h-3 w-3" />
+                            PDF
+                          </Link>
+                        ) : null}
+                        <DownloadDeliverable
+                          title={deliverable.title}
+                          content={deliverable.content}
+                          fileUrl={deliverable.fileUrl}
+                          fileName={deliverable.fileName}
+                        />
+                      </div>
                     </div>
                     {deliverable.content ? (
-                      <details className="mt-2">
+                      <details className="mt-2" open={deliverable.id === finalDeliverable?.id}>
                         <summary className="cursor-pointer text-[11px] text-zinc-500 hover:text-zinc-300">Ver contenido</summary>
                         <div className="mt-2 max-h-96 overflow-auto rounded-lg border border-white/[0.06] bg-black/20 p-4">
                           <Markdown content={deliverable.content} />
@@ -270,7 +283,7 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
             )}
           </section>
 
-          {task.finalReport ? (
+          {task.finalReport && !finalDeliverable ? (
             <Panel>
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-sm font-semibold text-white">Informe final</h2>
@@ -281,6 +294,13 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
               </div>
               <div className="mt-3">
                 <Markdown content={task.finalReport} />
+              </div>
+            </Panel>
+          ) : qualityNote ? (
+            <Panel>
+              <h2 className="text-sm font-semibold text-white">Revisión de calidad</h2>
+              <div className="mt-3">
+                <Markdown content={qualityNote} />
               </div>
             </Panel>
           ) : null}

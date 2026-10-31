@@ -24,12 +24,12 @@ export function qualityHeader(
   return `> **Control de calidad (${review.reviewerName}): ${review.score}/10**${criteria ? ` — ${criteria}` : ""}\n> ${review.observations.replace(/\n+/g, " ") || "Sin observaciones."}`;
 }
 
-const DIRECTOR_INSTRUCTIONS = `Escribe UN único entregable final con esta estructura:
-1. **Resumen ejecutivo** (3 a 5 líneas).
-2. **Entregable**: el contenido completo y utilizable, integrando las partes sin repetirlas ni resumirlas en exceso. Aplica las observaciones de calidad.
-3. **Próximos pasos** (máximo 5 viñetas accionables).
-4. **Limitaciones**, solo si las hay (datos que faltan o supuestos).
-No inventes datos que no estén en el trabajo del equipo. No menciones subtareas ni el proceso interno.`;
+// The deliverable is what was asked for (a post, a plan, an audit…), not a report about it.
+const DIRECTOR_INSTRUCTIONS = `Escribe UN único entregable final: exactamente lo que se pidió en el objetivo y en el pedido original, con su forma natural (si pidieron publicaciones, las publicaciones listas; si pidieron un plan, el plan; si pidieron una auditoría, la auditoría).
+- Empieza con \`# \` y un título claro, y abre con 2 o 3 líneas que digan qué contiene.
+- Integra el trabajo del equipo en un solo documento coherente, sin repetir partes ni resumirlas en exceso. Aplica las observaciones de calidad.
+- Cierra con "Próximos pasos" (máximo 5 viñetas) solo si ayudan a usarlo, y con "Supuestos" solo si se tomaron.
+No inventes datos que no estén en el trabajo del equipo. No menciones subtareas, al equipo ni el proceso interno.`;
 
 // The PDF goes to the client as is: no internal notes, no "for the director" sections.
 const CLIENT_DOCUMENT_INSTRUCTIONS = `Escribe el documento COMPLETO que se enviará al cliente; se descargará tal cual en PDF.

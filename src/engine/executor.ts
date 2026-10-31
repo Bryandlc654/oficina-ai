@@ -391,19 +391,8 @@ export async function executeSubtask(subtaskId: string): Promise<void> {
     const deliverableBody =
       sources.length > 0 ? `${extracted.body}\n\n## Fuentes consultadas\n\n${sources.join("\n")}` : extracted.body;
 
+    // A subtask's work stays internal (subtask.result); the task has one deliverable, the final one.
     await db.$transaction(async (tx) => {
-      await tx.deliverable.create({
-        data: {
-          taskId: subtask.taskId,
-          subtaskId,
-          agentId: agent.id,
-          runId: run.id,
-          title: truncate(subtask.title, 180),
-          type: deliverableType,
-          content: deliverableBody,
-        },
-      });
-
       await tx.subtask.update({
         where: { id: subtaskId },
         data: {
@@ -493,22 +482,12 @@ export async function executeSubtask(subtaskId: string): Promise<void> {
     }, { maxWait: 10000, timeout: 30000 });
 
     void publishOfficeEvent({
-      type: "deliverable.created",
-      taskId: subtask.taskId,
-      subtaskId,
-      agentId: agent.id,
-      agentName: agent.name,
-      status: "COMPLETED",
-      message: `${agent.name} entregó: ${subtask.title}`,
-    });
-
-    void publishOfficeEvent({
       type: "subtask.status",
       taskId: subtask.taskId,
       subtaskId,
       agentId: agent.id,
       status: "COMPLETED",
-      message: `Subtarea completada: ${subtask.title}`,
+      message: `${agent.name} terminó su parte: ${subtask.title}`,
     });
 
     void publishOfficeEvent({
