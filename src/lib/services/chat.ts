@@ -8,6 +8,7 @@ import { NotFoundError } from "../errors";
 import { taskCreateSchema } from "../validation";
 import { extractUrls, formatWebPages, readWebPages } from "../web-reader";
 import { retrieveAgentMemories, retrieveCompanyKnowledge } from "./memory-retrieval";
+import { chatInstruction, rememberLesson } from "./agent-learning";
 import { createTask } from "./tasks";
 
 export const GROUP_CHANNEL = "group";
@@ -83,6 +84,20 @@ export async function postAdminMessage(channel: string, content: string, admin: 
       ? groupOrder(mentioned, agents).slice(0, MAX_GROUP_REPLIES)
       : await defaultResponder(agents);
 
+  // "De ahora en adelante…" is remembered by everyone it was addressed to, at no token cost.
+  const instruction = chatInstruction(content);
+  if (instruction) {
+    const learners = dmId ? [dmId] : mentioned.length > 0 ? mentioned : agents.map((agent) => agent.id);
+    for (const agentId of learners) {
+      await rememberLesson(agentId, {
+        content: `El director indicó: ${instruction}`,
+        importance: 3,
+        source: `chat:${message.id}`,
+        kind: "chat_instruction",
+      }).catch((error) => console.error("[learning] no se pudo guardar la indicación del chat", error));
+    }
+  }
+
   // Replies take seconds; the client hears about them over realtime.
   void replyInTurn(channel, responders, agents, admin, content).catch((error) => {
     console.error("[chat] reply chain failed", error);
@@ -155,7 +170,7 @@ async function replyInTurn(
       const sharedUrls = extractUrls(messages[messages.length - 1]?.content ?? "").slice(0, MAX_CHAT_PAGES);
       const [knowledge, memories, pages] = await Promise.all([
         retrieveCompanyKnowledge(query, 3000),
-        retrieveAgentMemories(agent.id, query, 1500),
+        retrieveAgentMemories(agent.id, query, 1000),
         readWebPages(sharedUrls),
       ]);
       const system = chatSystemPrompt(agent, channel, agents, knowledge, memories, formatWebPages(pages), chain.task);
@@ -315,6 +330,7 @@ ${
 [[TAREA: título corto del pedido completo | objetivo detallado: qué documento o resultado se entrega, qué secciones lleva, supuestos que tomas y con quién colaboras (@slug)]]
 Después, en una o dos frases naturales, di que ya lo agendaste (por ejemplo "Lo agendo ya y lo armo con @designer").`
 }
+- Lo que el administrador te pida recordar ("de ahora en adelante…", "siempre…", "nunca…") ya queda guardado en tu memoria: confírmalo en una frase y aplícalo.
 - No antepongas tu nombre a la respuesta.`;
 }
 

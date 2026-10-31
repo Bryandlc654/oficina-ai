@@ -3,6 +3,7 @@ import { db } from "../db";
 import { AppError, ConflictError, NotFoundError } from "../errors";
 import type { TaskCreateInput, TaskUpdateInput } from "../validation";
 import { logActivity } from "./activity";
+import { rememberLesson } from "./agent-learning";
 import { assertTaskTransition } from "./task-state";
 import { cancelTaskExecution, pauseTaskExecution, scheduleTaskExecution } from "../../queue/scheduler";
 import { publishOfficeEvent } from "../../realtime/publish";
@@ -282,6 +283,18 @@ async function reviseTask(id: string, feedback: string, actorId: string) {
       tx,
     );
   }, { maxWait: 10000, timeout: 30000 });
+
+  // The director's corrections are the most valuable lesson an employee can get.
+  const workers = new Set(task.subtasks.map((subtask) => subtask.assignedAgentId).filter((agentId) => agentId !== null));
+  for (const agentId of workers) {
+    await rememberLesson(agentId, {
+      content: `El director pidió: ${feedback}`,
+      importance: 3,
+      source: `director:${id}`,
+      kind: "director_feedback",
+      taskId: id,
+    }).catch((error) => console.error("[learning] no se pudo guardar la indicación", error));
+  }
 
   await scheduleTaskExecution(id, null);
 

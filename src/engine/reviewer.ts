@@ -3,6 +3,7 @@ import { completeForAgent } from "../ai/manager";
 import { db } from "../lib/db";
 import { AppError } from "../lib/errors";
 import { logActivity } from "../lib/services/activity";
+import { rememberLesson } from "../lib/services/agent-learning";
 import { publishOfficeEvent } from "../realtime/publish";
 import { truncate } from "./context";
 import { parseReview, type Review } from "./plan";
@@ -234,6 +235,20 @@ ${result.text.slice(0, 8000)}`;
             where: { id: subtask.id },
             data: { status: "PENDING", errorMessage: null },
           });
+
+          if (subtask.assignedAgentId) {
+            await rememberLesson(
+              subtask.assignedAgentId,
+              {
+                content: `Control de calidad me corrigió: ${correction.instruction}`,
+                importance: 2,
+                source: `review:${taskId}`,
+                kind: "qa_correction",
+                taskId,
+              },
+              tx,
+            );
+          }
         }
       }
 

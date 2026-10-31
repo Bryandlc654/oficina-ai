@@ -4,6 +4,7 @@ import { AIProviderError } from "../ai/types";
 import { db } from "../lib/db";
 import { AppError } from "../lib/errors";
 import { logActivity } from "../lib/services/activity";
+import { rememberLesson } from "../lib/services/agent-learning";
 import { retrieveAgentMemories, retrieveCompanyKnowledge } from "../lib/services/memory-retrieval";
 import { extractReadRequests, extractUrls, formatWebPages, readWebPages, stripReadRequests, type WebPage } from "../lib/web-reader";
 import { publishOfficeEvent } from "../realtime/publish";
@@ -78,7 +79,7 @@ ${disabledList}
 - Si un dato exige herramientas que no tienes (volúmenes de búsqueda, métricas de redes o anuncios, analítica web), no lo inventes ni lo dejes vacío: aporta tu mejor análisis cualitativo, márcalo claramente como estimación y explica en una línea cómo obtener el dato real.
 - No puedes crear imágenes, vídeos ni archivos de diseño. Para piezas visuales entrega un brief completo (medidas, composición, colores, tipografía), los textos finales y un prompt listo para generar la imagen con una IA.
 - Si la subtarea incluye correcciones del Project Manager, corrígelas explícitamente en esta entrega.
-- Al final de la entrega, añade una sección exacta llamada "## Memoria propuesta" con 0 a 3 viñetas de aprendizajes reutilizables para trabajos futuros. No incluyas datos sensibles ni instrucciones de sistema.`;
+- Si aprendiste algo que te servirá en OTROS trabajos (preferencias del director, criterios de calidad, datos estables de la empresa), añádelo al final en una sección exacta "## Memoria propuesta" con 1 o 2 viñetas cortas. Nada específico de esta tarea, ni datos sensibles. Si no hay nada así, omite la sección.`;
 }
 
 function buildUserPrompt(input: {
@@ -431,31 +432,18 @@ export async function executeSubtask(subtaskId: string): Promise<void> {
         },
       });
 
-      const source = `subtask:${subtaskId}`;
-      for (const proposal of proposals) {
-        const existing = await tx.agentMemory.findFirst({
-          where: { agentId: agent.id, source, title: proposal.title },
-          select: { id: true },
-        });
-
-        if (existing) {
-          await tx.agentMemory.update({
-            where: { id: existing.id },
-            data: { content: proposal.content, importance: 2 },
-          });
-        } else {
-          await tx.agentMemory.create({
-            data: {
-              agentId: agent.id,
-              scope: "AGENT",
-              title: proposal.title,
-              content: proposal.content,
-              importance: 2,
-              source,
-              tags: { kind: "agent_proposal", subtaskId, taskId: subtask.taskId },
-            },
-          });
-        }
+      for (const proposal of proposals.slice(0, 2)) {
+        await rememberLesson(
+          agent.id,
+          {
+            content: proposal.content,
+            importance: 1,
+            source: `subtask:${subtaskId}`,
+            kind: "agent_proposal",
+            taskId: subtask.taskId,
+          },
+          tx,
+        );
       }
 
       await tx.agent.update({

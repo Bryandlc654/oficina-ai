@@ -17,6 +17,15 @@ type Memory = {
 
 const EMPTY = { title: "", content: "", importance: 2 };
 
+// Where a lesson came from; see agent-learning.ts for how each one is recorded.
+function memorySourceLabel(source: string | null): string {
+  const kind = source?.split(":")[0];
+  if (kind === "subtask") return "aprendido en tarea";
+  if (kind === "review") return "control de calidad";
+  if (kind === "director" || kind === "chat") return "indicación del director";
+  return "escrita por ti";
+}
+
 export function AgentMemoryManager({ agentId, memories }: { agentId: string; memories: Memory[] }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -123,9 +132,9 @@ export function AgentMemoryManager({ agentId, memories }: { agentId: string; mem
                   <div className="flex flex-wrap items-center gap-1.5">
                     <p className="text-xs font-medium text-zinc-200">{memory.title}</p>
                     <span className="chip border-white/8 bg-white/[0.03] text-[9px] text-zinc-500">
-                      {memory.source?.startsWith("subtask:") ? "agente" : "director"}
+                      {memorySourceLabel(memory.source)}
                     </span>
-                    {memory.source?.startsWith("subtask:") ? (
+                    {memory.source !== "admin" ? (
                       <span className="text-[9px] text-zinc-600">importancia {memory.importance}</span>
                     ) : null}
                   </div>
