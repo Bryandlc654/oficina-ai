@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
-import { OrbitControls } from "@react-three/drei";
+import { ContactShadows, Line, OrbitControls, Sparkles } from "@react-three/drei";
 import * as THREE from "three";
 import type { OfficeAgent, OfficeDepartment } from "./types";
 
@@ -121,6 +121,8 @@ export function OfficeCanvas({
       <pointLight position={[0, 9, -8]} intensity={18} distance={30} color="#bfdbfe" />
 
       <Floor />
+      <ContactShadows position={[0, 0.03, 0]} scale={[66, 50]} resolution={1024} far={3} blur={2.4} opacity={0.55} />
+      <Sparkles count={70} scale={[44, 7, 32]} position={[0, 3.5, -2]} size={2.2} speed={0.25} opacity={0.35} color="#6ee7b7" />
 
       <SceneContent
         zones={zones}
@@ -321,7 +323,7 @@ function Floor() {
     <group>
       <mesh rotation-x={-Math.PI / 2} position={[0, 0, 0]}>
         <planeGeometry args={[66, 50]} />
-        <meshStandardMaterial color="#0a1017" roughness={0.93} metalness={0.04} />
+        <meshStandardMaterial color="#0b121a" roughness={0.55} metalness={0.35} />
       </mesh>
       <gridHelper args={[66, 66, "#28343f", "#151d26"]} position={[0, 0.01, 0]} />
     </group>
@@ -335,6 +337,13 @@ function DepartmentZone({ zone }: { zone: Zone }) {
         <planeGeometry args={[9.4, 6.4]} />
         <meshBasicMaterial color={zone.department.color} transparent opacity={0.085} />
       </mesh>
+      <Line
+        points={[[-4.7, 0.03, -3.2], [4.7, 0.03, -3.2], [4.7, 0.03, 3.2], [-4.7, 0.03, 3.2], [-4.7, 0.03, -3.2]]}
+        color={zone.department.color}
+        lineWidth={1.5}
+        transparent
+        opacity={0.45}
+      />
       <mesh rotation-x={-Math.PI / 2} position={[0, 0.025, 0]}>
         <ringGeometry args={[0.05, 0.08, 24]} />
         <meshBasicMaterial color={zone.department.color} transparent opacity={0.65} />
@@ -379,12 +388,24 @@ function Desk({ color, working }: { color: string; working: boolean }) {
         <boxGeometry args={[0.08, 0.2, 0.08]} />
         <meshStandardMaterial color="#18222e" />
       </mesh>
+      <mesh position={[0, 0.52, 0.425]}>
+        <boxGeometry args={[1.6, 0.03, 0.02]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={working ? 0.9 : 0.25} />
+      </mesh>
+      <mesh position={[0, 0.93, 1.1]}>
+        <boxGeometry args={[0.84, 0.52, 0.03]} />
+        <meshStandardMaterial color="#111820" roughness={0.4} metalness={0.5} />
+      </mesh>
+      <mesh position={[0.6, 0.65, 0.95]}>
+        <cylinderGeometry args={[0.05, 0.045, 0.1, 12]} />
+        <meshStandardMaterial color="#e4e4e7" roughness={0.6} />
+      </mesh>
       <mesh position={[0, 0.93, 1.08]}>
         <boxGeometry args={[0.78, 0.46, 0.04]} />
         <meshStandardMaterial
           color="#0b1118"
           emissive={working ? color : "#0f1720"}
-          emissiveIntensity={working ? 0.5 : 0.14}
+          emissiveIntensity={working ? 0.85 : 0.14}
           roughness={0.5}
         />
       </mesh>

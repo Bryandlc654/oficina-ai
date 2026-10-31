@@ -8,7 +8,8 @@ import { SESSION_COOKIE, verifySessionToken } from "./src/lib/auth/jwt";
 import { OFFICE_EVENTS_CHANNEL, closeRealtimePublisher } from "./src/realtime/publish";
 
 const dev = process.env.NODE_ENV === "development";
-const hostname = process.env.HOSTNAME ?? "0.0.0.0";
+// Not HOSTNAME: platforms like Render set it to the container name, which breaks the proxy.
+const hostname = process.env.HOST ?? "0.0.0.0";
 const port = Number(process.env.PORT ?? 3000);
 
 function readCookie(header: string | undefined, name: string): string | null {
