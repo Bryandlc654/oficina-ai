@@ -8,7 +8,8 @@ import { logActivity } from "@/lib/services/activity";
 
 export async function POST(request: Request): Promise<Response> {
   return route(async () => {
-    const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+    // Last entry: the one appended by our proxy. Earlier entries are client-controlled.
+    const ip = request.headers.get("x-forwarded-for")?.split(",").pop()?.trim() || "local";
     const limit = checkRateLimit(`login:${ip}`);
     if (!limit.allowed) {
       return jsonError(
