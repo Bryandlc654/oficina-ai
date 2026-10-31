@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
-import { ContactShadows, Line, OrbitControls, Sparkles } from "@react-three/drei";
+import { Line, OrbitControls, Sparkles } from "@react-three/drei";
 import * as THREE from "three";
 import type { OfficeAgent, OfficeDepartment } from "./types";
 
@@ -121,7 +121,6 @@ export function OfficeCanvas({
       <pointLight position={[0, 9, -8]} intensity={18} distance={30} color="#bfdbfe" />
 
       <Floor />
-      <ContactShadows position={[0, 0.03, 0]} scale={[66, 50]} resolution={1024} far={3} blur={2.4} opacity={0.55} />
       <Sparkles count={70} scale={[44, 7, 32]} position={[0, 3.5, -2]} size={2.2} speed={0.25} opacity={0.35} color="#6ee7b7" />
 
       <SceneContent
@@ -368,9 +367,20 @@ function DeskStation({
   );
 }
 
+// Static fake shadow: the real ones (ContactShadows) re-render the scene every frame.
+function BlobShadow({ radius, position = [0, 0.03, 0] }: { radius: number; position?: [number, number, number] }) {
+  return (
+    <mesh rotation-x={-Math.PI / 2} position={position}>
+      <circleGeometry args={[radius, 24]} />
+      <meshBasicMaterial color="#000000" transparent opacity={0.35} depthWrite={false} />
+    </mesh>
+  );
+}
+
 function Desk({ color, working }: { color: string; working: boolean }) {
   return (
     <group>
+      <BlobShadow radius={0.95} position={[0, 0.03, 0.7]} />
       <mesh position={[0, 0.56, 0.85]}>
         <boxGeometry args={[1.6, 0.08, 0.85]} />
         <meshStandardMaterial color="#263241" roughness={0.78} />
@@ -522,6 +532,7 @@ function WalkingAvatar({
 
   return (
     <group ref={group} position={[home[0], 0, home[2]]} scale={1.12} onClick={handleClick}>
+      <BlobShadow radius={0.34} />
       <group ref={body}>
         <mesh position={[0, 0.8, 0]}>
           <capsuleGeometry args={[0.24, 0.44, 6, 12]} />
