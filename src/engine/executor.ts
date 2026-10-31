@@ -90,6 +90,7 @@ function buildUserPrompt(input: {
   memory: string;
   corrections: string[];
   webPages: string;
+  soleOwner: boolean;
 }): string {
   const corrections =
     input.corrections.length > 0
@@ -128,7 +129,15 @@ ${corrections}
 
 ## Páginas web leídas
 
-${input.webPages || "Ninguna."}`,
+${input.webPages || "Ninguna."}${
+      input.soleOwner
+        ? `
+
+## Eres el único responsable de esta tarea
+
+Tu entrega ES el entregable final que recibe el director. Entrega exactamente lo pedido, en su forma natural y listo para usar (si pidieron un post, el post; si pidieron un correo, el correo). Usa del contrato de entrega solo lo que encaje: nada de resumen ejecutivo ni secciones de relleno en piezas cortas.`
+        : ""
+    }`,
     MAX_PROMPT_CHARS,
   );
 }
@@ -232,7 +241,7 @@ export async function executeSubtask(subtaskId: string): Promise<void> {
 
   const retrievalQuery = `${subtask.task.title} ${subtask.task.objective} ${subtask.title} ${subtask.objective}`;
 
-  const [knowledge, memory, correctionMessages] = await Promise.all([
+  const [knowledge, memory, correctionMessages, siblings] = await Promise.all([
     retrieveCompanyKnowledge(retrievalQuery, 3500),
     retrieveAgentMemories(agent.id, retrievalQuery, 1500),
     db.agentMessage.findMany({
@@ -241,6 +250,7 @@ export async function executeSubtask(subtaskId: string): Promise<void> {
       take: 5,
       select: { content: true, metadata: true },
     }),
+    db.subtask.count({ where: { taskId: subtask.taskId } }),
   ]);
 
   const corrections = correctionMessages
@@ -274,6 +284,7 @@ export async function executeSubtask(subtaskId: string): Promise<void> {
     memory,
     corrections,
     webPages: formatWebPages(autoPages),
+    soleOwner: siblings === 1,
   });
 
   const systemPrompt = buildSystemPrompt({

@@ -24,7 +24,7 @@ const subtaskSchema = z.object({
 export const planSchema = z
   .object({
     summary: z.string().trim().min(10).max(2000),
-    subtasks: z.array(subtaskSchema).min(2).max(6),
+    subtasks: z.array(subtaskSchema).min(1).max(6),
   })
   .superRefine((plan, ctx) => {
     plan.subtasks.forEach((subtask, index) => {
@@ -70,7 +70,8 @@ export const reviewSchema = z.object({
   corrections: z
     .array(
       z.object({
-        subtaskOrder: z.number().int().min(1).max(8),
+        // Older reviews targeted a subtask; reviews of the final document don't.
+        subtaskOrder: z.number().int().min(0).max(8).optional(),
         instruction: z.string().trim().min(5).max(1500),
       }),
     )

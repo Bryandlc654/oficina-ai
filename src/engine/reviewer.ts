@@ -5,9 +5,13 @@ import { AppError } from "../lib/errors";
 import { logActivity } from "../lib/services/activity";
 import { rememberLesson } from "../lib/services/agent-learning";
 import { publishOfficeEvent } from "../realtime/publish";
+import { isClientDocument } from "./client-document";
 import { truncate } from "./context";
 import { parseReview, type Review } from "./plan";
-import { budgetedResults, getReviewerAgent, markBusy, markFree } from "./quality";
+import { getReviewerAgent, markBusy, markFree } from "./quality";
+
+// What the reviewer reads of the final document; longer documents are cut at the end.
+const DOCUMENT_BUDGET = 24_000;
 
 export type ReviewOutcome = {
   /** Score reached the office's minimum; corrections are only applied when it didn't. */
@@ -15,78 +19,66 @@ export type ReviewOutcome = {
   score: number;
   criteria: Review["criteria"];
   observations: string;
-  corrections: { subtaskOrder: number; instruction: string }[];
+  corrections: string[];
   reviewerName: string;
 };
 
 function buildReviewPrompt(input: {
   task: { title: string; objective: string; description: string };
-  subtasks: {
-    order: number;
-    title: string;
-    status: string;
-    expectedDeliverable: string;
-    result: string | null;
-    agent: string;
-  }[];
+  document: string;
   round: number;
   minScore: number;
 }): string {
-  const deliverables = budgetedResults(input.subtasks)
-    .map(
-      (subtask) => `### Subtarea ${subtask.order}: ${subtask.title}
-Responsable: ${subtask.agent}
-Estado: ${subtask.status}
-Entregable esperado: ${subtask.expectedDeliverable}
-Resultado:
-${subtask.text}`,
-    )
-    .join("\n\n");
+  const clientDocument = isClientDocument(`${input.task.title} ${input.task.objective} ${input.task.description}`);
 
-  return `## Tarea original
+  return `## Pedido
 
 Título: ${input.task.title}
 Objetivo: ${input.task.objective}
 Contexto: ${input.task.description || "Sin contexto adicional"}
 
-## Entregables del equipo
+## Documento final que recibirá el director
 
-${deliverables}
+${truncate(input.document, DOCUMENT_BUDGET)}
 
 ## Instrucciones de revisión (ronda ${input.round} de 2)
 
+Revisa el documento FINAL frente al pedido, como lo haría el director al abrirlo. Comprueba:
+1. ¿Es exactamente lo que se pidió, en la forma pedida (un PDF de cotización es una cotización completa, un post es el post listo)?
+2. ¿Están todas las partes que el pedido exige o que ese tipo de documento necesita?
+3. ¿Las cifras son coherentes entre sí (los totales cuadran con el desglose)?
+4. ¿Hay datos inventados presentados como reales, contradicciones o marcadores vacíos ([X], TBD)? Los campos del cliente entre corchetes para completar sí están permitidos.
+5. ¿Se puede usar tal cual, sin rehacer nada?
+${clientDocument ? "6. Al ser un documento para el cliente: ¿tiene tono profesional dirigido al cliente, precios en la moneda indicada, impuestos, condiciones de pago y validez, y ninguna nota interna?\n" : ""}
 Puntúa de 0 a 10 cada criterio y da una nota global:
-- objective: ¿cumple el objetivo de la tarea y el entregable esperado de cada subtarea?
-- accuracy: ¿está libre de datos, cifras o fuentes inventadas y de contradicciones?
-- usefulness: ¿el director puede usarlo tal cual para decidir o actuar?
+- objective: ¿cumple el pedido completo?
+- accuracy: ¿está libre de datos inventados, errores de cálculo y contradicciones?
+- usefulness: ¿el director puede usarlo tal cual?
 - clarity: ¿está bien estructurado y es fácil de leer?
 
-La nota mínima para entregar es ${input.minScore}. Si la nota global es menor, pide correcciones concretas y verificables (máximo una por subtarea, solo en las que fallan). Si llega a ${input.minScore}, deja "corrections" vacío: no bloquees por mejoras opcionales.${input.round === 2 ? " Es la última ronda: no habrá otra oportunidad de corrección." : ""}
+La nota mínima para entregar es ${input.minScore}. Si la nota global es menor, pide hasta 6 correcciones concretas y verificables sobre el documento ("añade la sección de condiciones de pago", "el total no cuadra: suma S/ 4.200, no S/ 4.500"). Si llega a ${input.minScore}, deja "corrections" vacío: no bloquees por mejoras opcionales.${input.round === 2 ? " Es la última ronda: no habrá otra corrección." : ""}
 
-Todos los entregables se entregan en Markdown. No penalices el formato salvo que la tarea exija otro de forma explícita.
-
-Evalúa frente a lo que el equipo puede producir: solo texto, sin herramientas de métricas (volúmenes de búsqueda, analítica, redes) ni generación de imágenes, y leyendo únicamente las páginas web enlazadas. No penalices la ausencia de archivos de imagen o de métricas de herramientas de pago si el entregable lo declara y aporta una alternativa útil (brief y prompt de imagen, estimaciones marcadas como tales, cómo obtener el dato real). Sí penaliza con dureza los marcadores de posición y los datos inventados presentados como reales, y pide correcciones que el equipo pueda cumplir con esas capacidades.
+El equipo solo produce texto: no penalices la ausencia de imágenes o de métricas de herramientas de pago si el documento lo declara y aporta una alternativa útil. El documento se entrega en Markdown y la plataforma lo exporta a PDF: no penalices el formato.
 
 Devuelve SOLO un objeto JSON válido, sin texto adicional ni bloques Markdown:
 
 {
   "score": 8,
   "criteria": { "objective": 8, "accuracy": 9, "usefulness": 7, "clarity": 8 },
-  "observations": "observaciones breves sobre la calidad global (máximo 5 frases)",
-  "corrections": [
-    { "subtaskOrder": 1, "instruction": "corrección concreta y verificable" }
-  ]
+  "observations": "observaciones breves sobre la calidad global (máximo 4 frases)",
+  "corrections": [{ "instruction": "corrección concreta y verificable" }]
 }`;
 }
 
-export async function reviewTask(taskId: string, round: number, minScore: number): Promise<ReviewOutcome> {
+export async function reviewTask(taskId: string, round: number, minScore: number, document: string): Promise<ReviewOutcome> {
   const task = await db.task.findUnique({
     where: { id: taskId },
-    include: {
-      subtasks: {
-        orderBy: { order: "asc" },
-        include: { assignedAgent: { select: { id: true, name: true } } },
-      },
+    select: {
+      title: true,
+      objective: true,
+      description: true,
+      status: true,
+      subtasks: { select: { assignedAgentId: true } },
     },
   });
 
@@ -99,14 +91,7 @@ export async function reviewTask(taskId: string, round: number, minScore: number
 
   let prompt = buildReviewPrompt({
     task: { title: task.title, objective: task.objective, description: task.description },
-    subtasks: task.subtasks.map((subtask) => ({
-      order: subtask.order,
-      title: subtask.title,
-      status: subtask.status,
-      expectedDeliverable: subtask.expectedDeliverable,
-      result: subtask.result,
-      agent: subtask.assignedAgent?.name ?? "Sin asignar",
-    })),
+    document,
     round,
     minScore,
   });
@@ -147,7 +132,7 @@ export async function reviewTask(taskId: string, round: number, minScore: number
     try {
       review = parseReview(result.text);
     } catch {
-      const repairPrompt = `La respuesta de revisión anterior no es JSON válido. Devuelve SOLO el objeto JSON corregido, sin markdown ni explicaciones. Debe tener "score" (número de 0 a 10), "criteria" (objeto), "observations" (string) y "corrections" (array).
+      const repairPrompt = `La respuesta de revisión anterior no es JSON válido. Devuelve SOLO el objeto JSON corregido, sin markdown ni explicaciones. Debe tener "score" (número de 0 a 10), "criteria" (objeto), "observations" (string) y "corrections" (array de objetos con "instruction").
 
 Respuesta inválida a reparar:
 ${result.text.slice(0, 8000)}`;
@@ -175,6 +160,10 @@ ${result.text.slice(0, 8000)}`;
     }
 
     const passed = review.score >= minScore;
+    const corrections = passed ? [] : review.corrections.map((correction) => correction.instruction);
+    const workers = new Set(
+      task.subtasks.map((subtask) => subtask.assignedAgentId).filter((agentId) => agentId !== null),
+    );
 
     await db.$transaction(async (tx) => {
       await tx.agentRun.update({
@@ -211,44 +200,30 @@ ${result.text.slice(0, 8000)}`;
             content: result.text,
             metadata: { kind: "review_response", round, score: review.score, passed },
           },
+          ...corrections.map((instruction) => ({
+            taskId,
+            fromAgentId: reviewer.id,
+            role: "USER" as const,
+            content: instruction,
+            metadata: { kind: "correction", round, target: "final_document" },
+          })),
         ],
       });
 
-      if (!passed) {
-        for (const correction of review.corrections) {
-          const subtask = task.subtasks.find((item) => item.order === correction.subtaskOrder);
-          if (!subtask) continue;
-
-          await tx.agentMessage.create({
-            data: {
+      // Everyone who fed the document learns what fell short.
+      for (const instruction of corrections) {
+        for (const agentId of workers) {
+          await rememberLesson(
+            agentId,
+            {
+              content: `Control de calidad corrigió: ${instruction}`,
+              importance: 2,
+              source: `review:${taskId}`,
+              kind: "qa_correction",
               taskId,
-              subtaskId: subtask.id,
-              fromAgentId: reviewer.id,
-              toAgentId: subtask.assignedAgentId,
-              role: "USER",
-              content: correction.instruction,
-              metadata: { kind: "correction", round },
             },
-          });
-
-          await tx.subtask.update({
-            where: { id: subtask.id },
-            data: { status: "PENDING", errorMessage: null },
-          });
-
-          if (subtask.assignedAgentId) {
-            await rememberLesson(
-              subtask.assignedAgentId,
-              {
-                content: `Control de calidad me corrigió: ${correction.instruction}`,
-                importance: 2,
-                source: `review:${taskId}`,
-                kind: "qa_correction",
-                taskId,
-              },
-              tx,
-            );
-          }
+            tx,
+          );
         }
       }
 
@@ -263,7 +238,7 @@ ${result.text.slice(0, 8000)}`;
             round,
             score: review.score,
             passed,
-            corrections: review.corrections.length,
+            corrections: corrections.length,
             observations: truncate(review.observations, 800),
           },
         },
@@ -278,8 +253,8 @@ ${result.text.slice(0, 8000)}`;
       taskId,
       status: passed ? "APPROVED" : "CORRECTIONS",
       message: passed
-        ? `${reviewer.name} aprobó los entregables (${review.score}/10)`
-        : `${reviewer.name} puntuó ${review.score}/10 y pidió ${review.corrections.length} corrección(es)`,
+        ? `${reviewer.name} aprobó el entregable (${review.score}/10)`
+        : `${reviewer.name} puntuó ${review.score}/10 y pidió ${corrections.length} corrección(es)`,
     });
 
     return {
@@ -287,7 +262,7 @@ ${result.text.slice(0, 8000)}`;
       score: review.score,
       criteria: review.criteria,
       observations: review.observations,
-      corrections: review.corrections,
+      corrections,
       reviewerName: reviewer.name,
     };
   } catch (error) {

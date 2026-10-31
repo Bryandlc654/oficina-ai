@@ -9,7 +9,7 @@ import { publishOfficeEvent } from "../realtime/publish";
 import { loadTaskSubtasks } from "./context";
 import { executeSubtask } from "./executor";
 import { clientDocumentBody, isClientDocument } from "./client-document";
-import { composeFinalDeliverable } from "./finalizer";
+import { composeFinalDeliverable, qualityHeader } from "./finalizer";
 import { createPlan } from "./planner";
 import { reviewTask } from "./reviewer";
 import { PM_SLUG } from "./quality";
@@ -402,12 +402,16 @@ export async function runTask(taskId: string): Promise<void> {
 
     const { qualityMinScore, autoApprove } = await getOfficeSettings();
 
+    // Quality control reviews the document the director will actually get; a failed
+    // review is fixed by rewriting that document, not by re-running every subtask.
+    let document = await composeFinalDeliverable(taskId);
+
     for (let round = 1; round <= MAX_REVIEW_ROUNDS; round += 1) {
       await assertRunnable(taskId);
 
       let review;
       try {
-        review = await reviewTask(taskId, round, qualityMinScore);
+        review = await reviewTask(taskId, round, qualityMinScore, document);
       } catch (error) {
         if (error instanceof AIProviderError) {
           if (["CANCELLED", "OFFICE_PAUSED", "TASK_PAUSED"].includes(error.code)) throw error;
@@ -418,10 +422,9 @@ export async function runTask(taskId: string): Promise<void> {
 
         // The team's work is done: the director still gets the finished document, just unreviewed.
         const message = errorMessage(error);
-        const finalReport = await composeFinalDeliverable(
-          taskId,
+        const finalReport = `${qualityHeader(
           `No se pudo completar (${message}). Revisa el documento y usa "Aprobar y completar" o solicita cambios.`,
-        );
+        )}\n\n${document}`;
         await holdForApproval(taskId, {
           observations: "La revisión automática no pudo completarse. El entregable queda pendiente de decisión del director.",
           finalReport,
@@ -433,7 +436,7 @@ export async function runTask(taskId: string): Promise<void> {
       const lastChance = round === MAX_REVIEW_ROUNDS || review.corrections.length === 0;
       if (review.passed || lastChance) {
         await assertRunnable(taskId);
-        const finalReport = await composeFinalDeliverable(taskId, review);
+        const finalReport = `${qualityHeader(review)}\n\n${document}`;
         if (review.passed && autoApprove) {
           await finalizeApproved(taskId, finalReport);
         } else {
@@ -442,16 +445,10 @@ export async function runTask(taskId: string): Promise<void> {
         return;
       }
 
-      await db.task.update({
-        where: { id: taskId },
-        data: { status: TaskStatus.RUNNING },
-      });
-
-      await executeAllSubtasks(taskId);
-
-      await db.task.update({
-        where: { id: taskId },
-        data: { status: TaskStatus.REVIEW },
+      document = await composeFinalDeliverable(taskId, {
+        draft: document,
+        observations: review.observations,
+        corrections: review.corrections,
       });
     }
   } catch (error) {

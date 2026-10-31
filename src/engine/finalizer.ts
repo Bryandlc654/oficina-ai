@@ -3,6 +3,7 @@ import { AIProviderError } from "../ai/types";
 import { cleanReply } from "../lib/chat-format";
 import { db } from "../lib/db";
 import { CLIENT_DOCUMENT_CURRENCY, isClientDocument } from "./client-document";
+import { truncate } from "./context";
 import { budgetedResults, markBusy, markFree, PM_SLUG } from "./quality";
 import type { ReviewOutcome } from "./reviewer";
 
@@ -41,11 +42,15 @@ const CLIENT_DOCUMENT_INSTRUCTIONS = `Escribe el documento COMPLETO que se envia
 - Los datos del cliente que no se conocen van como campos entre corchetes para completar ([Nombre del cliente], [Fecha]); los supuestos de alcance se declaran en "Alcance y entregables".
 - Nada de notas internas, revisiones de calidad, "próximos pasos del equipo" ni menciones al proceso o a las subtareas.`;
 
+
+export type FinalRevision = { draft: string; observations: string; corrections: string[] };
+
 /**
- * Merges every subtask result into the one document the director receives.
- * Falls back to stitching the results together if the model call fails.
+ * Writes the one document the director receives. With a single subtask its result
+ * already is that document, so no model call is spent. With a revision, the PM
+ * rewrites the reviewed draft applying quality control's corrections.
  */
-export async function composeFinalDeliverable(taskId: string, review: ReviewOutcome | string): Promise<string> {
+export async function composeFinalDeliverable(taskId: string, revision?: FinalRevision): Promise<string> {
   const task = await db.task.findUniqueOrThrow({
     where: { id: taskId },
     select: {
@@ -57,14 +62,31 @@ export async function composeFinalDeliverable(taskId: string, review: ReviewOutc
   });
 
   const results = budgetedResults(task.subtasks);
-  const header = qualityHeader(review);
   const stitched = results.map((subtask) => `## ${subtask.title}\n\n${subtask.result ?? "Sin resultado"}`).join("\n\n");
+  const fallback = revision?.draft ?? stitched;
+
+  if (!revision && task.subtasks.length === 1) return task.subtasks[0]?.result?.trim() || stitched;
 
   const pm = await db.agent.findUnique({ where: { slug: PM_SLUG }, select: { id: true } });
-  if (!pm) return `${header}\n\n${stitched}`;
+  if (!pm) return fallback;
 
   const clientDocument = isClientDocument(`${task.title} ${task.objective} ${task.description}`);
-  const observations = typeof review === "string" ? "ninguna" : review.observations || "ninguna";
+  const source = revision
+    ? `## Borrador revisado
+
+${revision.draft}
+
+## Correcciones de Control de calidad (aplícalas todas)
+
+${revision.corrections.map((correction, index) => `${index + 1}. ${correction}`).join("\n")}
+${revision.observations ? `\nObservaciones generales: ${revision.observations}` : ""}
+
+## Trabajo original del equipo (por si necesitas datos)
+
+${results.map((subtask) => `### ${subtask.order}. ${subtask.title}\n${truncate(subtask.text, 3000)}`).join("\n\n")}`
+    : `## Trabajo del equipo
+
+${results.map((subtask) => `### ${subtask.order}. ${subtask.title}\n${subtask.text}`).join("\n\n")}`;
 
   await markBusy(pm.id);
   try {
@@ -81,14 +103,10 @@ export async function composeFinalDeliverable(taskId: string, review: ReviewOutc
           content: `Tarea: ${task.title}
 Objetivo: ${task.objective}
 ${task.description ? `Contexto: ${task.description}\n` : ""}
-Observaciones de Control de calidad: ${observations}
-
-## Trabajo del equipo
-
-${results.map((subtask) => `### ${subtask.order}. ${subtask.title}\n${subtask.text}`).join("\n\n")}
+${source}
 
 ## Instrucciones
-${clientDocument ? CLIENT_DOCUMENT_INSTRUCTIONS : DIRECTOR_INSTRUCTIONS}`,
+${revision ? "Reescribe el documento COMPLETO aplicando cada corrección; conserva lo que ya estaba bien. Devuelve solo el documento final.\n" : ""}${clientDocument ? CLIENT_DOCUMENT_INSTRUCTIONS : DIRECTOR_INSTRUCTIONS}`,
         },
       ],
       maxOutputTokens: clientDocument ? 6000 : 4000,
@@ -96,13 +114,13 @@ ${clientDocument ? CLIENT_DOCUMENT_INSTRUCTIONS : DIRECTOR_INSTRUCTIONS}`,
     });
 
     const { text } = cleanReply(result.text);
-    return `${header}\n\n${text.length > 200 ? text : stitched}`;
+    return text.length > 200 ? text : fallback;
   } catch (error) {
     if (error instanceof AIProviderError && ["CANCELLED", "OFFICE_PAUSED", "TASK_PAUSED"].includes(error.code)) {
       throw error;
     }
     console.error("[finalizer] no se pudo consolidar el entregable", error);
-    return `${header}\n\n${stitched}`;
+    return fallback;
   } finally {
     await markFree(pm.id);
   }

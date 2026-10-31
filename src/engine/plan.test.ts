@@ -63,10 +63,9 @@ describe("planSchema", () => {
     expect(() => planSchema.parse(invalid)).toThrow();
   });
 
-  it("requires at least two subtasks", () => {
-    expect(() =>
-      planSchema.parse({ ...validPlan, subtasks: [validPlan.subtasks[0]] }),
-    ).toThrow();
+  it("accepts a single subtask for simple requests but not an empty plan", () => {
+    expect(planSchema.parse({ ...validPlan, subtasks: [validPlan.subtasks[0]] }).subtasks).toHaveLength(1);
+    expect(() => planSchema.parse({ ...validPlan, subtasks: [] })).toThrow();
   });
 
   it("rejects more than eight subtasks", () => {
@@ -85,12 +84,12 @@ describe("reviewSchema", () => {
         score: "6",
         criteria: { objective: 7, accuracy: 5 },
         observations: "Falta presupuesto",
-        corrections: [{ subtaskOrder: 2, instruction: "Añade un presupuesto estimado por canal" }],
+        corrections: [{ instruction: "Añade un presupuesto estimado por canal" }],
       }),
     );
     expect(review.score).toBe(6);
     expect(review.criteria.accuracy).toBe(5);
-    expect(review.corrections[0]?.subtaskOrder).toBe(2);
+    expect(review.corrections[0]?.instruction).toContain("presupuesto");
   });
 
   it("rejects scores out of range", () => {
