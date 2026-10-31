@@ -1,5 +1,5 @@
 import type { AIProvider } from "@prisma/client";
-import { getOpenRouterApiKey } from "@/ai/openrouter-env";
+import { getEnvApiKey } from "@/ai/openrouter-env";
 import { encryptSecret } from "../crypto";
 import { db } from "../db";
 import { AppError, NotFoundError } from "../errors";
@@ -33,7 +33,7 @@ export function toSafeProvider(provider: AIProvider): SafeProvider {
     isDefault: provider.isDefault,
     priority: provider.priority,
     hasKey: provider.apiKeyCipher !== null,
-    hasEnvKey: provider.type === "OPENROUTER" && Boolean(getOpenRouterApiKey()),
+    hasEnvKey: Boolean(getEnvApiKey(provider.type)),
     updatedAt: provider.updatedAt.toISOString(),
   };
 }
@@ -60,7 +60,7 @@ export async function updateProvider(
         : null;
 
   const hasKey = nextCipher !== null;
-  const hasEnvKey = provider.type === "OPENROUTER" && Boolean(getOpenRouterApiKey());
+  const hasEnvKey = Boolean(getEnvApiKey(provider.type));
   const configured = hasKey || hasEnvKey;
   const nextEnabled = input.isEnabled ?? provider.isEnabled;
   const nextDefault = input.isDefault ?? provider.isDefault;

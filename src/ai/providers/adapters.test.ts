@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import { callGemini } from "./gemini";
 import { callGroq } from "./groq";
 import { callOllama } from "./ollama";
+import { callOpenAI, openAIReasoningBudget } from "./openai";
 import { callOpenRouter } from "./openrouter";
 import type { ChatRequest, ProviderConfig } from "../types";
 
@@ -123,6 +124,21 @@ describe("Groq adapter", () => {
     expect(result.text).toBe("respuesta groq");
     expect(result.inputTokens).toBe(20);
     expect(result.totalTokens).toBe(28);
+  });
+});
+
+describe("OpenAI adapter", () => {
+  it("parses the chat completion with a bearer key", async () => {
+    const result = await callOpenAI(provider({ type: "OPENAI" }), request);
+    expect(result.text).toBe("respuesta groq");
+    expect(result.totalTokens).toBe(28);
+    expect(result.providerType).toBe("OPENAI");
+  });
+
+  it("gives reasoning models room to think and leaves classic ones alone", () => {
+    expect(openAIReasoningBudget("gpt-5-mini")).toBe(2048);
+    expect(openAIReasoningBudget("o4-mini")).toBe(2048);
+    expect(openAIReasoningBudget("gpt-4.1-mini")).toBeUndefined();
   });
 });
 

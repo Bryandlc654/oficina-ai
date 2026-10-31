@@ -1,4 +1,4 @@
-export type AIProviderKind = "GEMINI" | "GROQ" | "OLLAMA" | "OPENROUTER";
+export type AIProviderKind = "GEMINI" | "GROQ" | "OLLAMA" | "OPENAI" | "OPENROUTER";
 
 export type ChatRole = "user" | "assistant";
 

@@ -2,7 +2,7 @@ import type { AIProvider, Agent } from "@prisma/client";
 import { db } from "../lib/db";
 import { decryptSecret } from "../lib/crypto";
 import { getOfficeSettings } from "../lib/services/organization";
-import { getOpenRouterApiKey } from "./openrouter-env";
+import { getEnvApiKey } from "./openrouter-env";
 import { modelScore, rankModels, type ModelPurpose } from "./model-ranking";
 import { getAdapter } from "./providers";
 import {
@@ -54,7 +54,7 @@ function modelsOf(provider: ProviderRow): string[] {
 function isConfigured(provider: ProviderRow): boolean {
   if (provider.type === "OLLAMA") return true;
   if (provider.apiKeyCipher) return true;
-  if (provider.type === "OPENROUTER") return Boolean(getOpenRouterApiKey());
+  return Boolean(getEnvApiKey(provider.type));
   return false;
 }
 
@@ -266,9 +266,7 @@ export async function completeForAgent(input: CompletionInput): Promise<ChatResu
         try {
           apiKey = provider.apiKeyCipher
             ? decryptSecret(provider.apiKeyCipher)
-            : provider.type === "OPENROUTER"
-              ? getOpenRouterApiKey()
-              : null;
+            : getEnvApiKey(provider.type);
         } catch {
           lastError = new AIProviderError(
             `No se pudo descifrar la clave de ${provider.name}. Vuelve a guardarla.`,

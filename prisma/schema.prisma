@@ -84,6 +84,7 @@ enum AIProviderType {
   GEMINI
   GROQ
   OLLAMA
+  OPENAI
   OPENROUTER
 }
 

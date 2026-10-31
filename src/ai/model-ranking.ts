@@ -10,6 +10,16 @@ export type RankableModel = { providerType: string; model: string };
 
 // Matched in order against the lowercased model id; first hit wins.
 const KNOWN: [RegExp, number][] = [
+  // OpenAI ids, bare or OpenRouter-prefixed; gpt-oss is matched further down.
+  [/^(openai\/)?gpt-5[\w.-]*-nano/, 72],
+  [/^(openai\/)?gpt-5[\w.-]*-mini/, 87],
+  [/^(openai\/)?gpt-5/, 94],
+  [/^(openai\/)?gpt-4\.1-nano/, 66],
+  [/^(openai\/)?gpt-4\.1-mini/, 80],
+  [/^(openai\/)?gpt-4\.1/, 86],
+  [/^(openai\/)?gpt-4o-mini/, 74],
+  [/^(openai\/)?gpt-4o/, 84],
+  [/^(openai\/)?o\d(-mini)?/, 88],
   [/gemini-[\d.]+-pro/, 92],
   [/deepseek.*(r1|v3)/, 84],
   [/gemini-[\d.]+-flash-lite/, 72],
@@ -57,6 +67,8 @@ export function modelScore(candidate: RankableModel, purpose: ModelPurpose): num
   let score = modelQuality(id);
   if (purpose === "chat") {
     if (/-pro\b|-pro-|deepseek.*r1/.test(id)) score -= 12;
+    // Full gpt-5 thinks before every line; mini answers a chat just as well, faster.
+    if (/^(openai\/)?gpt-5(?![\w.-]*-(mini|nano))/.test(id)) score -= 12;
     if (candidate.providerType === "GROQ") score += 6;
   }
   // Local models are a last resort on a hosted deployment.

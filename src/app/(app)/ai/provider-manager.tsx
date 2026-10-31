@@ -23,6 +23,7 @@ const TYPE_LABELS: Record<string, string> = {
   GEMINI: "Google Gemini",
   GROQ: "Groq",
   OLLAMA: "Ollama · local",
+  OPENAI: "OpenAI",
   OPENROUTER: "OpenRouter · API compatible",
 };
 
@@ -148,7 +149,7 @@ function ProviderCard({ provider }: { provider: Provider }) {
                   provider.hasKey
                     ? "Clave guardada · escribe para reemplazar"
                     : provider.hasEnvKey
-                      ? "OPENROUTER_API_KEY del entorno · escribe para reemplazar"
+                      ? "Clave del entorno · escribe para reemplazar"
                       : "Pega la API key"
                 }
                 value={apiKey}

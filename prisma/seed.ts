@@ -35,6 +35,13 @@ const PROVIDERS = [
     models: ["gemini-2.5-flash", "gemini-2.5-pro"],
   },
   {
+    name: "OpenAI",
+    type: AIProviderType.OPENAI,
+    baseUrl: "https://api.openai.com/v1",
+    priority: 5,
+    models: ["gpt-5", "gpt-5-mini", "gpt-4.1-mini"],
+  },
+  {
     name: "Groq",
     type: AIProviderType.GROQ,
     baseUrl: "https://api.groq.com/openai/v1",
